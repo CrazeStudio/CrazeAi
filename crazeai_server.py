@@ -1,28 +1,34 @@
 import os
-from typing import List, Optional
-
+from typing import List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-# ========== CONFIG ==========
-# Put your keys into a .env file or env variables
-BING_API_KEY = os.getenv("BING_API_KEY")        # optional but recommended
+# ======================================
+# ENV VARIABLES
+# ======================================
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_CX = os.getenv("GOOGLE_CX")
 
-# ========== FASTAPI APP ==========
-app = FastAPI(title="CrazeAi API")
+BING_API_KEY = os.getenv("BING_API_KEY")
 
-# allow frontend from anywhere (for development)
+# ======================================
+# FASTAPI APP
+# ======================================
+app = FastAPI(title="CrazeAI API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------- MODELS ----------
+
+# ======================================
+# MODELS
+# ======================================
 class ChatRequest(BaseModel):
     message: str
 
@@ -37,9 +43,45 @@ class ChatResponse(BaseModel):
     results: List[WebResult]
 
 
-# ========== SEARCH PROVIDERS ==========
+# ======================================
+# GOOGLE SEARCH
+# ======================================
+async def search_google(query: str):
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
+        return []
 
-async def search_bing(query: str) -> List[WebResult]:
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "q": query,
+        "key": GOOGLE_API_KEY,
+        "cx": GOOGLE_CX,
+        "num": 3
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(url, params=params)
+        data = r.json()
+
+    results = []
+
+    if "items" in data:
+        for item in data["items"]:
+            results.append(
+                WebResult(
+                    title=item.get("title", ""),
+                    url=item.get("link", ""),
+                    snippet=item.get("snippet", ""),
+                    source="google"
+                )
+            )
+
+    return results
+
+
+# ======================================
+# BING SEARCH
+# ======================================
+async def search_bing(query: str):
     if not BING_API_KEY:
         return []
 
@@ -51,7 +93,8 @@ async def search_bing(query: str) -> List[WebResult]:
         r = await client.get(url, headers=headers, params=params)
         data = r.json()
 
-    results: List[WebResult] = []
+    results = []
+
     if "webPages" in data:
         for item in data["webPages"]["value"]:
             results.append(
@@ -59,56 +102,44 @@ async def search_bing(query: str) -> List[WebResult]:
                     title=item.get("name", ""),
                     url=item.get("url", ""),
                     snippet=item.get("snippet", ""),
-                    source="bing",
+                    source="bing"
                 )
             )
+
     return results
 
 
-async def search_duckduckgo(query: str) -> List[WebResult]:
+# ======================================
+# DUCKDUCKGO INSTANT ANSWER
+# ======================================
+async def search_duckduckgo(query: str):
     url = "https://api.duckduckgo.com/"
-    params = {
-        "q": query,
-        "format": "json",
-        "no_html": 1,
-        "no_redirect": 1,
-    }
+    params = {"q": query, "format": "json", "no_html": 1, "no_redirect": 1}
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(url, params=params)
         data = r.json()
 
-    results: List[WebResult] = []
+    results = []
 
-    # main abstract
     abstract = data.get("AbstractText") or ""
     if abstract:
         results.append(
             WebResult(
-                title=data.get("Heading") or "DuckDuckGo Instant Answer",
+                title=data.get("Heading") or "DuckDuckGo Answer",
                 url=data.get("AbstractURL") or "",
                 snippet=abstract,
-                source="duckduckgo",
+                source="duckduckgo"
             )
         )
-
-    # related topics
-    for topic in data.get("RelatedTopics", [])[:2]:
-        if isinstance(topic, dict) and "Text" in topic:
-            results.append(
-                WebResult(
-                    title=topic.get("Text")[:80],
-                    url=topic.get("FirstURL", ""),
-                    snippet=topic.get("Text", ""),
-                    source="duckduckgo",
-                )
-            )
 
     return results
 
 
-async def search_wikipedia(query: str) -> List[WebResult]:
-    # simple search -> first result summary
+# ======================================
+# WIKIPEDIA
+# ======================================
+async def search_wikipedia(query: str):
     search_url = "https://en.wikipedia.org/w/api.php"
     params = {
         "action": "query",
@@ -122,102 +153,86 @@ async def search_wikipedia(query: str) -> List[WebResult]:
         r = await client.get(search_url, params=params)
         data = r.json()
 
-    results: List[WebResult] = []
-    search_results = data.get("query", {}).get("search", [])
-    if not search_results:
+    results = []
+    search_res = data.get("query", {}).get("search", [])
+    if not search_res:
         return results
 
-    first = search_results[0]
+    first = search_res[0]
     title = first["title"]
     page_url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
 
-    # second call: summary
-    summary_url = (
-        f"https://en.wikipedia.org/api/rest_v1/page/summary/"
-        f"{title.replace(' ', '_')}"
-    )
+    summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title.replace(' ', '_')}"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         r2 = await client.get(summary_url)
         summary_data = r2.json()
 
     snippet = summary_data.get("extract") or first.get("snippet", "")
+
     results.append(
         WebResult(
             title=title,
             url=page_url,
             snippet=snippet,
-            source="wikipedia",
+            source="wikipedia"
         )
     )
+
     return results
 
 
-async def aggregate_search(query: str) -> List[WebResult]:
-    """Call multiple systems and merge results."""
-    bing_results: List[WebResult] = []
-    ddg_results: List[WebResult] = []
-    wiki_results: List[WebResult] = []
+# ======================================
+# AGGREGATE SEARCH
+# ======================================
+async def aggregate_search(query: str):
+    google_res = await search_google(query)
+    bing_res = await search_bing(query)
+    ddg_res = await search_duckduckgo(query)
+    wiki_res = await search_wikipedia(query)
 
-    # call in parallel
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # we can't share client easily with the functions above,
-        # so just call them normally (simple way for you)
-        pass
+    all_results = google_res + bing_res + ddg_res + wiki_res
 
-    # Simpler: just call sequentially (still fine for now)
-    bing_results = await search_bing(query)
-    ddg_results = await search_duckduckgo(query)
-    wiki_results = await search_wikipedia(query)
-
-    all_results = bing_results + ddg_results + wiki_results
-
-    # remove duplicates by url
+    # remove duplicate urls
     seen = set()
-    unique: List[WebResult] = []
+    unique = []
     for r in all_results:
-        if r.url and r.url not in seen:
+        if r.url not in seen:
             seen.add(r.url)
             unique.append(r)
 
-    # limit total
     return unique[:7]
 
 
-# ========== SIMPLE ANSWER BUILDER ==========
-
-def build_answer(question: str, results: List[WebResult]) -> str:
+# ======================================
+# ANSWER BUILDER
+# ======================================
+def build_answer(question: str, results: List[WebResult]):
     if not results:
-        return (
-            "I couldn't find anything clear on the web right now. "
-            "Try rephrasing your question or being more specific."
-        )
+        return f"I couldn't find anything online for: {question}"
 
-    # Take top few snippets and stitch a human-style answer
-    lines = [f"Here's what I found for: **{question}**\n"]
+    lines = [f"Here's what I found about **{question}**:\n"]
 
     for r in results[:3]:
-        lines.append(f"- {r.snippet.strip()} (source: {r.source})")
+        lines.append(f"- {r.snippet} (source: {r.source})")
 
-    lines.append(
-        "\nThese are web results. Always double-check important info "
-        "by opening the original links."
-    )
+    lines.append("\nTap links below for full details.")
 
     return "\n".join(lines)
 
 
-# ========== MAIN ENDPOINT ==========
-
+# ======================================
+# MAIN ENDPOINT
+# ======================================
 @app.post("/api/crazeai", response_model=ChatResponse)
-async def crazeai_chat(body: ChatRequest):
-    query = body.message.strip()
-    results = await aggregate_search(query)
-    answer = build_answer(query, results)
+async def crazeai_chat(req: ChatRequest):
+    q = req.message
+    results = await aggregate_search(q)
+    answer = build_answer(q, results)
     return ChatResponse(answer=answer, results=results)
 
 
-# for local run
+# LOCAL RUN
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("crazeai_server:app", host="0.0.0.0", port=8000, reload=True)
