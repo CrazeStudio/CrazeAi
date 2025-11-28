@@ -5,17 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-# ======================================
+# =============================
 # ENV VARIABLES
-# ======================================
+# =============================
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CX = os.getenv("GOOGLE_CX")
 
-BING_API_KEY = os.getenv("BING_API_KEY")
-
-# ======================================
-# FASTAPI APP
-# ======================================
+# =============================
+# FASTAPI APP SETUP
+# =============================
 app = FastAPI(title="CrazeAI API")
 
 app.add_middleware(
@@ -25,10 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ======================================
+# =============================
 # MODELS
-# ======================================
+# =============================
 class ChatRequest(BaseModel):
     message: str
 
@@ -42,10 +39,9 @@ class ChatResponse(BaseModel):
     answer: str
     results: List[WebResult]
 
-
-# ======================================
+# =============================
 # GOOGLE SEARCH
-# ======================================
+# =============================
 async def search_google(query: str):
     if not GOOGLE_API_KEY or not GOOGLE_CX:
         return []
@@ -63,7 +59,6 @@ async def search_google(query: str):
         data = r.json()
 
     results = []
-
     if "items" in data:
         for item in data["items"]:
             results.append(
@@ -74,55 +69,27 @@ async def search_google(query: str):
                     source="google"
                 )
             )
-
     return results
 
-
-# ======================================
-# BING SEARCH
-# ======================================
-async def search_bing(query: str):
-    if not BING_API_KEY:
-        return []
-
-    url = "https://api.bing.microsoft.com/v7.0/search"
-    headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
-    params = {"q": query, "count": 3}
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(url, headers=headers, params=params)
-        data = r.json()
-
-    results = []
-
-    if "webPages" in data:
-        for item in data["webPages"]["value"]:
-            results.append(
-                WebResult(
-                    title=item.get("name", ""),
-                    url=item.get("url", ""),
-                    snippet=item.get("snippet", ""),
-                    source="bing"
-                )
-            )
-
-    return results
-
-
-# ======================================
-# DUCKDUCKGO INSTANT ANSWER
-# ======================================
+# =============================
+# DUCKDUCKGO
+# =============================
 async def search_duckduckgo(query: str):
     url = "https://api.duckduckgo.com/"
-    params = {"q": query, "format": "json", "no_html": 1, "no_redirect": 1}
+    params = {
+        "q": query,
+        "format": "json",
+        "no_html": 1,
+        "no_redirect": 1
+    }
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(url, params=params)
         data = r.json()
 
     results = []
-
     abstract = data.get("AbstractText") or ""
+
     if abstract:
         results.append(
             WebResult(
@@ -132,13 +99,11 @@ async def search_duckduckgo(query: str):
                 source="duckduckgo"
             )
         )
-
     return results
 
-
-# ======================================
+# =============================
 # WIKIPEDIA
-# ======================================
+# =============================
 async def search_wikipedia(query: str):
     search_url = "https://en.wikipedia.org/w/api.php"
     params = {
@@ -146,7 +111,7 @@ async def search_wikipedia(query: str):
         "list": "search",
         "srsearch": query,
         "format": "json",
-        "utf8": 1,
+        "utf8": 1
     }
 
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -154,15 +119,18 @@ async def search_wikipedia(query: str):
         data = r.json()
 
     results = []
-    search_res = data.get("query", {}).get("search", [])
-    if not search_res:
+    search_results = data.get("query", {}).get("search", [])
+    if not search_results:
         return results
 
-    first = search_res[0]
+    first = search_results[0]
     title = first["title"]
     page_url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
 
-    summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title.replace(' ', '_')}"
+    summary_url = (
+        f"https://en.wikipedia.org/api/rest_v1/page/summary/"
+        f"{title.replace(' ', '_')}"
+    )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         r2 = await client.get(summary_url)
@@ -181,21 +149,20 @@ async def search_wikipedia(query: str):
 
     return results
 
-
-# ======================================
-# AGGREGATE SEARCH
-# ======================================
+# =============================
+# AGGREGATE SEARCH (Google + DDG + Wiki)
+# =============================
 async def aggregate_search(query: str):
     google_res = await search_google(query)
-    bing_res = await search_bing(query)
     ddg_res = await search_duckduckgo(query)
     wiki_res = await search_wikipedia(query)
 
-    all_results = google_res + bing_res + ddg_res + wiki_res
+    all_results = google_res + ddg_res + wiki_res
 
-    # remove duplicate urls
+    # remove duplicates
     seen = set()
     unique = []
+
     for r in all_results:
         if r.url not in seen:
             seen.add(r.url)
@@ -203,27 +170,25 @@ async def aggregate_search(query: str):
 
     return unique[:7]
 
-
-# ======================================
+# =============================
 # ANSWER BUILDER
-# ======================================
+# =============================
 def build_answer(question: str, results: List[WebResult]):
     if not results:
-        return f"I couldn't find anything online for: {question}"
+        return f"I couldn't find anything for: {question}"
 
     lines = [f"Here's what I found about **{question}**:\n"]
 
     for r in results[:3]:
         lines.append(f"- {r.snippet} (source: {r.source})")
 
-    lines.append("\nTap links below for full details.")
+    lines.append("\nOpen the links below for full details.")
 
     return "\n".join(lines)
 
-
-# ======================================
+# =============================
 # MAIN ENDPOINT
-# ======================================
+# =============================
 @app.post("/api/crazeai", response_model=ChatResponse)
 async def crazeai_chat(req: ChatRequest):
     q = req.message
@@ -231,8 +196,9 @@ async def crazeai_chat(req: ChatRequest):
     answer = build_answer(q, results)
     return ChatResponse(answer=answer, results=results)
 
-
+# =============================
 # LOCAL RUN
+# =============================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("crazeai_server:app", host="0.0.0.0", port=8000, reload=True)
