@@ -1,4 +1,3 @@
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,8 +20,7 @@ class CausalSelfAttention(nn.Module):
         k = k.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.dropout if self.training else 0.0)
-        y = y.transpose(1, 2).contiguous().view(b, t, c)
-        return self.proj(y)
+        return self.proj(y.transpose(1, 2).contiguous().view(b, t, c))
 
 
 class MLP(nn.Module):
@@ -36,6 +34,20 @@ class MLP(nn.Module):
         return self.dropout(self.fc2(F.gelu(self.fc1(x))))
 
 
+class Block(nn.Module):
+    def __init__(self, d_model, n_heads, ffn_dim, dropout=0.0):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(d_model)
+        self.attn = CausalSelfAttention(d_model, n_heads, dropout)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.mlp = MLP(d_model, ffn_dim, dropout)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
+        return x
+
+
 class NanoSLM(nn.Module):
     def __init__(self, vocab_size=4096, d_model=128, n_heads=4, n_layers=4, ffn_dim=512, ctx_len=256, dropout=0.0):
         super().__init__()
@@ -43,7 +55,7 @@ class NanoSLM(nn.Module):
         self.tok_emb = nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(ctx_len, d_model)
         self.drop = nn.Dropout(dropout)
-        self.blocks = nn.ModuleList([nn.ModuleList([nn.LayerNorm(d_model), CausalSelfAttention(d_model, n_heads, dropout), nn.LayerNorm(d_model), MLP(d_model, ffn_dim, dropout)]) for _ in range(n_layers)])
+        self.blocks = nn.ModuleList([Block(d_model, n_heads, ffn_dim, dropout) for _ in range(n_layers)])
         self.ln_f = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, vocab_size, bias=False)
         self.head.weight = self.tok_emb.weight
@@ -54,9 +66,8 @@ class NanoSLM(nn.Module):
             raise ValueError(f"sequence length {t} exceeds context {self.ctx_len}")
         pos = torch.arange(t, device=idx.device)
         x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
-        for ln1, attn, ln2, mlp in self.blocks:
-            x = x + attn(ln1(x))
-            x = x + mlp(ln2(x))
+        for block in self.blocks:
+            x = block(x)
         return self.head(self.ln_f(x))
 
 
