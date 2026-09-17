@@ -1,0 +1,1 @@
+"""CrazeAI application package."""
