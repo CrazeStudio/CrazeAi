@@ -1,13 +1,32 @@
 import re
 
-SEARCH_WORDS = {"latest", "today", "current", "news", "recent", "weather", "price", "score", "update", "updates", "search"}
+SEARCH_PATTERNS = (
+    r"\b(latest|today|current|recent|news|weather|price|prices|score|scores|update|updates|release|version|stock|market)\b",
+    r"\b(what is|who is|where is|when is|how much|how many)\b.*\b(today|now|current|latest|recent)\b",
+)
+QUESTION_STARTS = ("what ", "why ", "how ", "who ", "where ", "when ", "which ", "can ", "is ", "are ", "do ", "does ", "will ")
 
 
 def analyze(prompt: str):
-    text = prompt.strip()
+    text = re.sub(r"\s+", " ", prompt.strip())
     lower = text.lower()
-    needs_search = any(word in lower for word in SEARCH_WORDS)
-    if re.search(r"\b(when|where|who|what|which)\b", lower) and any(x in lower for x in ("2026", "today", "latest", "current", "recent")):
+    is_question = text.endswith("?") or lower.startswith(QUESTION_STARTS)
+    needs_search = any(re.search(pattern, lower) for pattern in SEARCH_PATTERNS)
+
+    # Explicit web requests always use the web route.
+    if re.search(r"\b(search|look up|find online|browse the web|on the internet)\b", lower):
         needs_search = True
-    intent = "question" if text.endswith("?") or lower.startswith(("what ", "why ", "how ", "who ", "where ", "when ")) else "conversation"
-    return {"intent": intent, "needs_search": needs_search, "action": "search_and_answer" if needs_search else "answer", "query": text}
+
+    if needs_search:
+        action = "search_and_answer"
+    elif is_question:
+        action = "answer"
+    else:
+        action = "chat"
+
+    return {
+        "intent": "question" if is_question else "conversation",
+        "needs_search": needs_search,
+        "action": action,
+        "query": text,
+    }
