@@ -1,6 +1,152 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CrazeAI — Daily AI</title><style>*{box-sizing:border-box}body{margin:0;background:#070707;color:#f2f2f2;font:15px system-ui,-apple-system,sans-serif}main{width:min(900px,94vw);margin:auto;padding:22px 0 40px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}h1{font-size:24px;margin:0}.badge{font-size:12px;color:#aaa;border:1px solid #292929;padding:6px 9px;border-radius:999px}.chat{min-height:55vh;background:#0d0d0d;border:1px solid #222;border-radius:18px;padding:14px;overflow:auto}.msg{max-width:82%;padding:11px 13px;border-radius:14px;margin:9px 0;white-space:pre-wrap;line-height:1.5}.user{margin-left:auto;background:#e9e9e9;color:#080808}.ai{background:#151515;border:1px solid #252525}.thinking{color:#888;font-style:italic}.composer{position:sticky;bottom:10px;margin-top:12px;background:#0d0d0d;border:1px solid #292929;border-radius:16px;padding:10px}textarea{width:100%;resize:none;background:#080808;color:#eee;border:0;outline:0;border-radius:10px;padding:10px;min-height:54px;font:inherit}.row{display:flex;align-items:center;gap:10px;margin-top:7px}button{border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer}.ask{margin-left:auto;background:#eee;color:#000}.toggle{color:#aaa;font-size:13px}.sources{font-size:12px;margin:4px 0 12px 8px}.sources a{display:block;color:#aaa;margin:5px 0;text-decoration:none}.welcome{color:#888;text-align:center;padding:24px}@media(max-width:600px){.msg{max-width:92%}}</style></head><body><main><header><h1>CrazeAI</h1><span class="badge">Daily AI</span></header><div id="chat" class="chat"><div class="welcome">Ask anything. CrazeAI can route fresh questions to web search.</div></div><div class="composer"><textarea id="p" placeholder="Message CrazeAI..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea><div class="row"><label class="toggle"><input id="s" type="checkbox" checked> Web when needed</label><button class="ask" onclick="send()">Ask</button></div></div></main><script>
-const chat=document.getElementById('chat'),input=document.getElementById('p');
-function add(text,kind,cls=''){const d=document.createElement('div');d.className='msg '+kind+' '+cls;d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d}
-async function send(){const p=input.value.trim();if(!p)return;if(chat.querySelector('.welcome'))chat.innerHTML='';add(p,'user');input.value='';input.focus();const t=add('Thinking…','ai','thinking');try{const r=await fetch('/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p,search:document.getElementById('s').checked,max_new_tokens:64,temperature:.7,top_k:30})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Request failed');t.classList.remove('thinking');t.textContent='';const text=d.response||'No response.';const lines=text.split(/(?<=[.!?])\s+|\n+/);for(const line of lines){if(!line.trim())continue;t.textContent+=(t.textContent?'\n':'')+line.trim();chat.scrollTop=chat.scrollHeight;await new Promise(x=>setTimeout(x,35))}if(d.sources?.length){const box=document.createElement('div');box.className='sources';d.sources.forEach(x=>{if(x.url){const a=document.createElement('a');a.href=x.url;a.target='_blank';a.rel='noopener';a.textContent='↗ '+(x.title||x.url);box.appendChild(a)}});chat.appendChild(box)}}catch(e){t.classList.remove('thinking');t.textContent='Error: '+e.message}}
-</script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#050505">
+<title>CrazeAI</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--bg:#050505;--panel:#0d0d0d;--panel2:#121212;--border:#252525;--text:#f4f4f4;--muted:#777}
+html,body{margin:0;width:100%;height:100%;background:var(--bg);color:var(--text);font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{overflow:hidden}.app{height:100dvh;display:flex;flex-direction:column}
+header{height:62px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #161616;background:#050505eF;backdrop-filter:blur(16px)}
+.brand{display:flex;align-items:center;gap:10px}.logo{width:34px;height:34px;border-radius:10px;background:#eee;color:#050505;display:grid;place-items:center;font-weight:900}.name{font-weight:800}.sub{font-size:10px;color:#666}.status{font-size:11px;color:#777;border:1px solid var(--border);padding:6px 9px;border-radius:999px}
+.chat{flex:1;overflow:auto;padding:22px 14px 135px}.inner{width:min(820px,100%);margin:auto}
+.welcome{min-height:55vh;display:grid;place-items:center;text-align:center;color:#777}.welcome h1{color:#eee;font-size:29px;margin:0 0 8px}.welcome p{max-width:440px;line-height:1.6;margin:0 auto 22px}
+.suggestions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}.suggestion{background:#0d0d0d;border:1px solid var(--border);color:#999;border-radius:999px;padding:9px 12px;cursor:pointer}
+.row{display:flex;margin:18px 0}.row.user{justify-content:flex-end}.row.ai{justify-content:flex-start}.msg{max-width:88%;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap}.userMsg{background:#eee;color:#050505;padding:11px 14px;border-radius:17px 17px 5px 17px}.aiMsg{background:var(--panel2);border:1px solid #202020;padding:12px 14px;border-radius:5px 17px 17px 17px}.label{font-size:10px;color:#666;margin-bottom:5px}.thinking{color:#777;font-style:italic}
+.sources{font-size:11px;color:#777;margin:-8px 0 15px 8px}.sources a{display:block;color:#888;text-decoration:none;margin:5px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.composerWrap{position:absolute;bottom:0;left:0;right:0;padding:8px 10px calc(9px + env(safe-area-inset-bottom));background:linear-gradient(transparent,#050505 35%);pointer-events:none}.composer{pointer-events:auto;width:min(820px,100%);margin:auto;background:#101010;border:1px solid #292929;border-radius:18px;padding:8px;box-shadow:0 10px 35px #0008}
+textarea{display:block;width:100%;min-height:43px;max-height:160px;resize:none;background:transparent;color:#eee;border:0;outline:0;padding:9px;font:inherit;line-height:1.45}textarea::placeholder{color:#555}
+.controls{display:flex;align-items:center;gap:9px;padding:2px 5px}.toggle{font-size:11px;color:#777}.send{margin-left:auto;width:40px;height:40px;border:0;border-radius:12px;background:#eee;color:#050505;font-weight:800;cursor:pointer}.send:disabled{opacity:.35}
+.meta{font-size:10px;color:#555;padding:2px 5px}
+@media(max-width:600px){.msg{max-width:94%}.welcome h1{font-size:26px}.chat{padding-left:9px;padding-right:9px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header><div class="brand"><div class="logo">C</div><div><div class="name">CrazeAI</div><div class="sub">Tiny Neural Core</div></div></div><div class="status" id="status">Loading…</div></header>
+<main class="chat" id="chat"><div class="inner" id="inner">
+<section class="welcome" id="welcome"><div><h1>How can I help?</h1><p>CrazeAI learns question intent from <b>data.json</b> using a tiny neural network.</p><div class="suggestions">
+<button class="suggestion" onclick="use('What is HTML?')">What is HTML?</button>
+<button class="suggestion" onclick="use('Write Hello World in Python')">Write code</button>
+<button class="suggestion" onclick="use('What is Minecraft?')">Minecraft</button>
+<button class="suggestion" onclick="use('What is artificial intelligence?')">Explain AI</button>
+</div></div></section>
+</div></main>
+<div class="composerWrap"><div class="composer">
+<textarea id="input" placeholder="Message CrazeAI…" rows="1"></textarea>
+<div class="controls"><label class="toggle"><input id="web" type="checkbox"> Web search (API later)</label><button class="send" id="send">↑</button></div>
+<div class="meta" id="meta">Loading training data…</div>
+</div></div>
+</div>
+<script>
+/*
+  CRAZEAI TINY NEURAL CORE
+  Architecture:
+    32 input features × 24 hidden
+    24 hidden × 8 output
+    + 24 hidden biases + 8 output biases
+    = 992 trainable parameters.
+
+  This model is an intent classifier, not a text generator.
+  The actual knowledge/answers live in data.json.
+*/
+
+const INPUTS=32,HIDDEN=24,OUTPUTS=8,LR=.08,EPOCHS=350;
+const INTENTS=["knowledge","coding","web","greeting","explain","math","creative","general"];
+let DATA=null, W1=[],B1=[],W2=[],B2=[],trained=false,busy=false;
+
+const $=id=>document.getElementById(id);
+const chat=$("chat"),inner=$("inner"),input=$("input"),send=$("send"),status=$("status"),meta=$("meta");
+
+function normalize(s){return String(s).toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim()}
+function hashWord(w){let h=2166136261;for(let i=0;i<w.length;i++){h^=w.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)%INPUTS}
+function features(text){const x=new Array(INPUTS).fill(0);for(const w of normalize(text).split(" ").filter(Boolean)){x[hashWord(w)]+=1}let m=Math.max(...x,1);return x.map(v=>v/m)}
+function rand(){return (Math.random()*2-1)*0.12}
+function sigmoid(x){return 1/(1+Math.exp(-Math.max(-20,Math.min(20,x))))}
+function initModel(){W1=Array.from({length:HIDDEN},()=>Array.from({length:INPUTS},rand));B1=Array(HIDDEN).fill(0).map(rand);W2=Array.from({length:OUTPUTS},()=>Array.from({length:HIDDEN},rand));B2=Array(OUTPUTS).fill(0).map(rand)}
+function forward(x){const h=B1.map((b,j)=>sigmoid(b+W1[j].reduce((s,w,i)=>s+w*x[i],0)));const o=B2.map((b,k)=>b+W2[k].reduce((s,w,j)=>s+w*h[j],0));const max=Math.max(...o);const e=o.map(v=>Math.exp(v-max));const sum=e.reduce((a,b)=>a+b,0);return {h,o:e.map(v=>v/sum)}}
+function train(examples){
+  initModel();
+  for(let epoch=0;epoch<EPOCHS;epoch++){
+    for(const ex of examples){
+      const x=features(ex.input),y=INTENTS.indexOf(ex.intent);if(y<0)continue;
+      const {h,o}=forward(x),do_=o.map((v,k)=>v-(k===y?1:0));
+      const dh=W2.map((row,j)=>row.reduce((s,w,k)=>s+w*do_[k],0)*h[j]*(1-h[j]));
+      for(let k=0;k<OUTPUTS;k++){for(let j=0;j<HIDDEN;j++)W2[k][j]-=LR*do_[k]*h[j];B2[k]-=LR*do_[k]}
+      for(let j=0;j<HIDDEN;j++){for(let i=0;i<INPUTS;i++)W1[j][i]-=LR*dh[j]*x[i];B1[j]-=LR*dh[j]}
+    }
+  }
+  trained=true;
+}
+function classify(text){
+  const p=forward(features(text)).o;let best=0;
+  for(let i=1;i<p.length;i++)if(p[i]>p[best])best=i;
+  return {intent:INTENTS[best],confidence:p[best],scores:p}
+}
+function localAnswer(question){
+  const q=normalize(question);
+  const k=DATA?.knowledge||[];
+  for(const item of k){
+    for(const pattern of (item.patterns||[])){
+      const p=normalize(pattern);
+      if(q===p||q.includes(p)||p.includes(q))return item.answer;
+    }
+  }
+  return null;
+}
+function codeAnswer(q){
+  const x=normalize(q);
+  if(x.includes("hello world")){
+    if(x.includes("javascript"))return 'console.log("Hello, World!");';
+    if(x.includes("html"))return '<!doctype html>\n<html>\n<body>\n<h1>Hello, World!</h1>\n</body>\n</html>';
+    return 'print("Hello, World!")';
+  }
+  return null;
+}
+function addUser(text){const r=document.createElement("div");r.className="row user";const m=document.createElement("div");m.className="msg userMsg";m.textContent=text;r.appendChild(m);inner.appendChild(r);scroll();return r}
+function addAIThinking(){const r=document.createElement("div");r.className="row ai";const m=document.createElement("div");m.className="msg aiMsg";m.innerHTML='<div class="label">CRAZEAI</div><div class="thinking">Thinking…</div>';r.appendChild(m);inner.appendChild(r);scroll();return m}
+async function typeAnswer(box,text){
+  const t=box.querySelector(".thinking");if(t)t.remove();const out=document.createElement("div");box.appendChild(out);
+  const parts=String(text).split(/(?<=[.!?])\s+|\n+/).filter(x=>x.trim());
+  for(const part of parts){out.textContent+=(out.textContent?"\n":"")+part.trim();scroll();await new Promise(r=>setTimeout(r,35))}
+}
+function sources(list){if(!Array.isArray(list)||!list.length)return;const box=document.createElement("div");box.className="sources";for(const s of list){if(!s.url)continue;const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener";a.textContent="↗ "+(s.title||s.url);box.appendChild(a)}inner.appendChild(box);scroll()}
+function scroll(){chat.scrollTop=chat.scrollHeight}
+function use(v){input.value=v;resize();input.focus()}
+function resize(){input.style.height="auto";input.style.height=Math.min(input.scrollHeight,160)+"px"}
+
+async function ask(q){
+  const c=classify(q);
+  const local=localAnswer(q);if(local)return {answer:local,source:"data.json",classification:c};
+  const code=codeAnswer(q);if(code)return {answer:code,source:"tiny-code",classification:c};
+  if(c.intent==="greeting")return {answer:"Hi! I'm CrazeAI. How can I help?",source:"trained-intent",classification:c};
+  if($("web").checked)return {answer:"Web search is not enabled in the browser-only build yet. The trained core classified this as "+c.intent+" ("+(c.confidence*100).toFixed(1)+"% confidence). Connect the future search API here.",source:"search-hook",classification:c};
+  return {answer:"I don't have that information in data.json yet. The tiny neural core classified your request as "+c.intent+".",source:"trained-intent",classification:c};
+}
+
+async function sendMessage(){
+  if(busy)return;const q=input.value.trim();if(!q)return;busy=true;send.disabled=true;
+  const w=$("welcome");if(w)w.remove();addUser(q);input.value="";resize();const box=addAIThinking();
+  try{const r=await ask(q);await typeAnswer(box,r.answer);meta.textContent="Intent: "+r.classification.intent+" • "+(r.classification.confidence*100).toFixed(1)+"% confidence • "+r.source}
+  catch(e){await typeAnswer(box,"Error: "+e.message)}
+  finally{busy=false;send.disabled=false;input.focus()}
+}
+
+async function boot(){
+  try{
+    const r=await fetch("data.json",{cache:"no-store"});if(!r.ok)throw Error("data.json not found");
+    DATA=await r.json();const examples=DATA.training||[];if(!examples.length)throw Error("No training examples");
+    train(examples);
+    status.textContent="992 params • trained";meta.textContent="Tiny neural core ready • "+examples.length+" training examples";
+  }catch(e){status.textContent="Data error";meta.textContent=e.message}
+}
+input.addEventListener("input",resize);
+input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}});
+send.addEventListener("click",sendMessage);
+boot();
+</script>
+</body>
+</html>
