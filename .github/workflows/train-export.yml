@@ -1,46 +1,54 @@
-name: Train and Export CrazeAI
+name: Train, Export and Build CrazeAI
 
 on:
   workflow_dispatch:
 
 jobs:
-  train-and-export:
+  train-export-build:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
       - name: Train CrazeAI
         run: python train.py
-
       - name: Export native model
         run: python export.py --checkpoint crazeai.pt --output crazeai.craze
-
-      - name: Show model size
+      - name: Show model sizes
         run: ls -lh crazeai.pt crazeai.craze
-
-      - name: Upload native model
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: Build CrazeAI Android APK
+        working-directory: android
+        run: |
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug
+      - name: Collect release files
+        run: |
+          mkdir -p output
+          cp crazeai.craze output/
+          cp crazeai.pt output/
+          find android/app/build/outputs/apk -name "*.apk" -exec cp {} output/CrazeAI-debug.apk \;
+          ls -lh output/
+      - name: Upload CrazeAI package
         uses: actions/upload-artifact@v4
         with:
-          name: crazeai-native-model
-          path: crazeai.craze
-          retention-days: 7
-
-      - name: Upload PyTorch checkpoint
-        uses: actions/upload-artifact@v4
-        with:
-          name: crazeai-pytorch-checkpoint
-          path: crazeai.pt
+          name: crazeai-package
+          path: output/
           retention-days: 7
