@@ -2,6 +2,8 @@ name: Train, Export and Build CrazeAI
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main"]
 
 jobs:
   train-export-build:
@@ -38,16 +40,19 @@ jobs:
         run: ls -lh crazeai.pt crazeai.craze
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ""
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
 
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses > /dev/null || true
-
-      - name: Install Android SDK packages
         run: |
-          sdkmanager --update || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1"
-          sdkmanager "ndk;27.2.12479018"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: Install required Android packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Build CrazeAI Android APK
         working-directory: android
