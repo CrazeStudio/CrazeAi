@@ -140,9 +140,7 @@ static std::string run(const std::string&userPrompt,int max,float){
     if(!ready)return "Load a .craze model first.";
 
     // Match the exact instruction format used by the training dataset.
-    std::string prompt="### Instruction:\
-
-"+userPrompt+
+    std::string prompt="### Instruction:\n"+userPrompt+
                        "\n### Input:\n\n### Output:\n";
 
     std::vector<uint32_t>ids(1,256);
