@@ -49,22 +49,22 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#0B0B0F"));
 
-        // Header
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(14), dp(10), dp(10), dp(10));
 
         ImageView logo = new ImageView(this);
         logo.setImageResource(ai.craze.runtime.R.drawable.ic_crazeai_logo);
-        LinearLayout.LayoutParams lpLogo = new LinearLayout.LayoutParams(dp(42), dp(42));
-        header.addView(logo, lpLogo);
+        header.addView(logo, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         LinearLayout brand = new LinearLayout(this);
         brand.setOrientation(LinearLayout.VERTICAL);
         brand.setPadding(dp(10), 0, 0, 0);
+
         TextView title = text("CrazeAI", 20, Color.WHITE);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         brand.addView(title);
+
         status = text("No model loaded", 12, Color.parseColor("#9CA3AF"));
         brand.addView(status);
         header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
@@ -73,37 +73,35 @@ public class MainActivity extends Activity {
         menu.setImageResource(android.R.drawable.ic_menu_more);
         menu.setColorFilter(Color.WHITE);
         menu.setBackgroundColor(Color.TRANSPARENT);
-        menu.setContentDescription("Menu");
+        menu.setContentDescription("Load model");
         header.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
         root.addView(header);
 
-        // Chat area
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        chat = text("", 16, Color.parseColor("#E5E7EB"));
-        chat.setPadding(dp(20), dp(18), dp(20), dp(18));
 
         LinearLayout chatWrap = new LinearLayout(this);
         chatWrap.setOrientation(LinearLayout.VERTICAL);
         chatWrap.setGravity(Gravity.CENTER_HORIZONTAL);
-        chatWrap.addView(chat, new LinearLayout.LayoutParams(-1, -2));
 
         TextView welcome = text("What can I help with?", 28, Color.WHITE);
         welcome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         welcome.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2);
         wp.setMargins(dp(20), dp(80), dp(20), dp(16));
-        chatWrap.addView(welcome, 0, wp);
+        chatWrap.addView(welcome, wp);
 
         TextView hint = text("Ask CrazeAI anything", 15, Color.parseColor("#9CA3AF"));
         hint.setGravity(Gravity.CENTER);
-        chatWrap.addView(hint, 1, new LinearLayout.LayoutParams(-1, -2));
+        chatWrap.addView(hint);
+
+        chat = text("", 16, Color.parseColor("#E5E7EB"));
+        chat.setPadding(dp(20), dp(24), dp(20), dp(18));
+        chatWrap.addView(chat, new LinearLayout.LayoutParams(-1, -2));
 
         scroll.addView(chatWrap);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        // Composer
         LinearLayout composer = new LinearLayout(this);
         composer.setGravity(Gravity.CENTER_VERTICAL);
         composer.setPadding(dp(10), dp(8), dp(10), dp(12));
@@ -132,22 +130,21 @@ public class MainActivity extends Activity {
 
         composer.addView(box, new LinearLayout.LayoutParams(0, -2, 1));
         root.addView(composer);
-
         setContentView(root);
 
-        View.OnClickListener loadAction = v -> {
+        menu.setOnClickListener(v -> {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             i.addCategory(Intent.CATEGORY_OPENABLE);
             i.setType("*/*");
             startActivityForResult(i, PICK);
-        };
-        menu.setOnClickListener(loadAction);
+        });
         send.setOnClickListener(v -> generateAsync());
     }
 
     private void generateAsync() {
         String p = input.getText().toString();
         if (p.trim().isEmpty()) return;
+
         send.setEnabled(false);
         status.setText("Thinking...");
         String old = chat.getText().toString();
@@ -155,7 +152,8 @@ public class MainActivity extends Activity {
         input.setText("");
 
         executor.execute(() -> {
-            String answer = generate(p, 256, 0.8f);
+            // Short interactive response by default. The native runtime also caps at 64.
+            String answer = generate(p, 48, 0.7f);
             runOnUiThread(() -> {
                 String current = chat.getText().toString();
                 chat.setText(current + answer);
@@ -168,8 +166,10 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int r, int result, Intent data) {
         super.onActivityResult(r, result, data);
         if (r != PICK || result != RESULT_OK || data == null) return;
+
         Uri u = data.getData();
         status.setText("Loading model...");
+
         executor.execute(() -> {
             try {
                 File f = new File(getFilesDir(), "crazeai.craze");
@@ -179,6 +179,7 @@ public class MainActivity extends Activity {
                     int n;
                     while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
                 }
+
                 boolean ok = loadModel(f.getAbsolutePath());
                 runOnUiThread(() -> status.setText(ok ? "Model ready" : "Model load failed"));
             } catch (Exception e) {
