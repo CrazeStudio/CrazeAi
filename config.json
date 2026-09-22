@@ -1,12 +1,12 @@
 {
   "vocab_size": 256,
-  "block_size": 512,
-  "n_embd": 256,
-  "n_layer": 6,
-  "n_head": 8,
+  "block_size": 1024,
+  "n_embd": 720,
+  "n_layer": 12,
+  "n_head": 12,
   "dropout": 0.0,
-  "batch_size": 8,
-  "learning_rate": 0.0003,
+  "batch_size": 2,
+  "learning_rate": 0.0002,
   "epochs": 3,
   "grad_clip": 1.0,
   "checkpoint": "crazeai.pt"
