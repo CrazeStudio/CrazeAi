@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(crazeai)
+add_library(crazeai SHARED crazeai.cpp)
+target_compile_features(crazeai PRIVATE cxx_std_17)
+target_compile_options(crazeai PRIVATE -O3 -ffast-math)
+find_library(log_lib log)
+target_link_libraries(crazeai ${log_lib})
