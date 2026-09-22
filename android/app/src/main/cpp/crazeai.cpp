@@ -119,32 +119,30 @@ static std::vector<float> step(uint32_t token,uint32_t pos,
     return logits;
 }
 
+static bool repeated_single_token(const std::string& s, int window = 12) {
+    if ((int)s.size() < window) return false;
+    char last = s.back();
+    for (int i = 1; i < window; ++i)
+        if (s[s.size() - 1 - i] != last) return false;
+    return true;
+}
+
+static bool repeated_short_pattern(const std::string& s) {
+    if (s.size() < 24) return false;
+    size_t n = s.size();
+    for (int i = 0; i < 8; ++i)
+        if (s[n - 24 + i] != s[n - 16 + i] ||
+            s[n - 24 + i] != s[n - 8 + i]) return false;
+    return true;
+}
+
 static std::string run(const std::string&userPrompt,int max,float){
     if(!ready)return "Load a .craze model first.";
 
     // Match the exact instruction format used by the training dataset.
     std::string prompt="### Instruction:\
 
-// v1 repetition guard: stop degenerate single-token loops.
-static bool repeated_single_token(const std::vector<int>& ids, int window = 12) {
-    if ((int)ids.size() < window) return false;
-    int last = ids.back();
-    for (int i = 1; i < window; ++i) {
-        if (ids[ids.size() - 1 - i] != last) return false;
-    }
-    return true;
-}
-
-static bool repeated_short_pattern(const std::vector<int>& ids) {
-    if (ids.size() < 24) return false;
-    size_t n = ids.size();
-    for (int i = 0; i < 8; ++i) {
-        if (ids[n - 24 + i] != ids[n - 16 + i]) return false;
-        if (ids[n - 24 + i] != ids[n - 8 + i]) return false;
-    }
-    return true;
-}
-n"+userPrompt+
+"+userPrompt+
                        "\n### Input:\n\n### Output:\n";
 
     std::vector<uint32_t>ids(1,256);
@@ -174,6 +172,8 @@ n"+userPrompt+
 
         out.push_back((char)pick);
 
+        if (repeated_single_token(out) || repeated_short_pattern(out)) break;
+
         uint32_t pos=(uint32_t)ids.size();
         if(pos>=MAX_CTX)break;
         ids.push_back((uint32_t)pick);
@@ -185,6 +185,7 @@ n"+userPrompt+
     for(unsigned char c:out){
         if(c=='\n'||c=='\r'||c=='\t'||(c>=32&&c<127))clean.push_back((char)c);
     }
+    if (clean.empty()) return "No useful response generated yet.";
     return clean;
 }
 
