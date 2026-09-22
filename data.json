@@ -1,72 +1,14 @@
 {
-  "version": "2.0",
-  "model": {
-    "type": "tiny-intent-network",
-    "parameters": 992,
-    "input_features": 32,
-    "hidden_units": 24,
-    "outputs": 8
-  },
-  "training": [
-    {"input":"what is html","intent":"knowledge"},
-    {"input":"what is css","intent":"knowledge"},
-    {"input":"what is json","intent":"knowledge"},
-    {"input":"what is minecraft","intent":"knowledge"},
-    {"input":"what is an ai","intent":"knowledge"},
-    {"input":"tell me about python","intent":"knowledge"},
-    {"input":"write hello world code","intent":"coding"},
-    {"input":"write python code","intent":"coding"},
-    {"input":"make javascript code","intent":"coding"},
-    {"input":"create html code","intent":"coding"},
-    {"input":"help me program","intent":"coding"},
-    {"input":"latest minecraft version","intent":"web"},
-    {"input":"what is the latest news","intent":"web"},
-    {"input":"current weather","intent":"web"},
-    {"input":"today's price","intent":"web"},
-    {"input":"search the web","intent":"web"},
-    {"input":"what does this mean","intent":"explain"},
-    {"input":"explain this to me","intent":"explain"},
-    {"input":"explain html simply","intent":"explain"},
-    {"input":"why does this happen","intent":"explain"},
-    {"input":"what is 2 plus 2","intent":"math"},
-    {"input":"calculate 100 divided by 5","intent":"math"},
-    {"input":"solve this equation","intent":"math"},
-    {"input":"make a story","intent":"creative"},
-    {"input":"write a poem","intent":"creative"},
-    {"input":"give me an idea","intent":"creative"},
-    {"input":"hi","intent":"greeting"},
-    {"input":"hello","intent":"greeting"},
-    {"input":"hey","intent":"greeting"},
-    {"input":"good morning","intent":"greeting"},
-    {"input":"thanks","intent":"general"},
-    {"input":"help me","intent":"general"},
-    {"input":"what can you do","intent":"general"},
-    {"input":"tell me something","intent":"general"}
-  ],
-  "knowledge": [
-    {
-      "patterns":["what is html","html meaning"],
-      "answer":"HTML (HyperText Markup Language) is the standard markup language used to structure content on web pages."
-    },
-    {
-      "patterns":["what is css","css meaning"],
-      "answer":"CSS (Cascading Style Sheets) is used to control the appearance, layout, spacing, colors and visual presentation of web pages."
-    },
-    {
-      "patterns":["what is json","json meaning"],
-      "answer":"JSON (JavaScript Object Notation) is a lightweight text format commonly used to store and exchange structured data."
-    },
-    {
-      "patterns":["what is minecraft"],
-      "answer":"Minecraft is a sandbox game developed by Mojang Studios where players can explore, build, craft and interact with a block-based world."
-    },
-    {
-      "patterns":["what is ai","what is artificial intelligence"],
-      "answer":"Artificial intelligence is a field of computing focused on systems that can perform tasks involving capabilities such as learning, pattern recognition, reasoning or language processing."
-    },
-    {
-      "patterns":["what is python"],
-      "answer":"Python is a general-purpose programming language known for readable syntax and a large ecosystem of libraries."
-    }
+  "version": "1.0",
+  "name": "CrazeAI Code Dataset",
+  "entries": [
+    {"instruction":"Write a Python function that adds two numbers.","input":"","output":"def add(a, b):\n    return a + b"},
+    {"instruction":"Explain what an HTML div is.","input":"","output":"A div is a generic block-level HTML container used to group content and apply structure or styling."},
+    {"instruction":"Write a JavaScript function that reverses a string.","input":"","output":"function reverseString(value) {\n  return value.split('').reverse().join('');\n}"},
+    {"instruction":"What does CSS do?","input":"","output":"CSS controls the presentation of HTML, including layout, spacing, colors, typography, and responsive styling."},
+    {"instruction":"Fix this Python condition.","input":"if x = 5:","output":"Use comparison with ==: if x == 5:"},
+    {"instruction":"Write a JSON object for a user.","input":"","output":"{\"name\":\"Alex\",\"age\":18}"},
+    {"instruction":"Explain a Python list.","input":"","output":"A Python list is an ordered, mutable collection that can contain multiple values."},
+    {"instruction":"Write a SQL query that selects all users.","input":"","output":"SELECT * FROM users;"}
   ]
 }

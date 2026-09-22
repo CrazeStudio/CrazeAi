@@ -1,27 +1,22 @@
 # CrazeAI
 
-CrazeAI is a small PyTorch AI service built around the MIT-licensed microGPT checkpoint, with an analyzer/controller layer and optional web search.
+A compact decoder-only Transformer for code generation and instruction learning.
 
-## Architecture
+## Files
+- `model.py` — causal Transformer
+- `tokenizer.py` — byte-level tokenizer
+- `dataset.py` — JSONL-style instruction dataset loader
+- `train.py` — training/checkpointing
+- `generate.py` — sampling/inference
+- `config.json` — model settings
+- `data.json` — training data
+- `requirements.txt` — dependencies
 
-User -> Analyzer -> Controller -> Search (when needed) -> microGPT -> Response
+This is a new lightweight CrazeAI implementation. It does not contain Meta model weights.
 
-The bundled checkpoint is a 1.35M-parameter GPT-style base model trained on TinyStories. It is not instruction-tuned; the analyzer, controller, and search layer provide orchestration and current-information retrieval.
-
-## Render
-
-Build: `pip install -r requirements.txt && python setup_model.py`
-
-Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-
-The build downloads the matching public tokenizer if it is not already present.
-
-## API
-
-`GET /health`
-
-`POST /generate`
-
-```json
-{"prompt":"What is the latest Minecraft version?","search":true}
+### Train
+```bash
+pip install -r requirements.txt
+python train.py
+python generate.py --prompt "Write a Python function that reverses a string."
 ```
