@@ -123,7 +123,28 @@ static std::string run(const std::string&userPrompt,int max,float){
     if(!ready)return "Load a .craze model first.";
 
     // Match the exact instruction format used by the training dataset.
-    std::string prompt="### Instruction:\n"+userPrompt+
+    std::string prompt="### Instruction:\
+
+// v1 repetition guard: stop degenerate single-token loops.
+static bool repeated_single_token(const std::vector<int>& ids, int window = 12) {
+    if ((int)ids.size() < window) return false;
+    int last = ids.back();
+    for (int i = 1; i < window; ++i) {
+        if (ids[ids.size() - 1 - i] != last) return false;
+    }
+    return true;
+}
+
+static bool repeated_short_pattern(const std::vector<int>& ids) {
+    if (ids.size() < 24) return false;
+    size_t n = ids.size();
+    for (int i = 0; i < 8; ++i) {
+        if (ids[n - 24 + i] != ids[n - 16 + i]) return false;
+        if (ids[n - 24 + i] != ids[n - 8 + i]) return false;
+    }
+    return true;
+}
+n"+userPrompt+
                        "\n### Input:\n\n### Output:\n";
 
     std::vector<uint32_t>ids(1,256);
