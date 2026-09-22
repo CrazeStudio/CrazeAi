@@ -42,23 +42,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: ""
-          accept-android-sdk-licenses: false
-          log-accepted-android-sdk-licenses: false
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018 cmake;3.22.1"
+          accept-android-sdk-licenses: true
 
-      - name: Accept Android SDK licenses
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-      - name: Install required Android packages
-        run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
 
       - name: Build CrazeAI Android APK
         working-directory: android
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          ./gradlew --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Collect release files
         run: |
