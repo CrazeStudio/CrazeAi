@@ -13,7 +13,7 @@ on:
       - "config.json"
       - "export.py"
       - "requirements.txt"
-      - ".github/workflows/model.yml"
+      - ".github/workflows/train-export.yml"
 
 jobs:
   train-export:
@@ -24,8 +24,6 @@ jobs:
 
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/local/lib/android/sdk/ndk/* || true
-          sudo rm -rf /usr/local/lib/android/sdk/system-images/* || true
           sudo rm -rf /usr/share/dotnet || true
           sudo apt-get clean
 
