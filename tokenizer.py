@@ -1,15 +1,22 @@
 import torch
 
 class ByteTokenizer:
-    vocab_size = 256
-    bos = 2
-    eos = 3
+    """UTF-8 byte tokenizer with two reserved special IDs."""
+    vocab_size = 258
+    bos = 256
+    eos = 257
+
     def encode(self, text, add_bos=True, add_eos=True):
-        x=list(text.encode("utf-8", errors="replace"))
-        if add_bos: x=[self.bos]+x
-        if add_eos: x=x+[self.eos]
-        return x
+        ids = list(text.encode("utf-8", errors="replace"))
+        if add_bos:
+            ids.insert(0, self.bos)
+        if add_eos:
+            ids.append(self.eos)
+        return ids
+
     def decode(self, ids):
-        return bytes(i for i in ids if 0 <= i < 256).decode("utf-8", errors="replace")
+        data = bytes(i for i in ids if 0 <= i < 256)
+        return data.decode("utf-8", errors="replace")
+
     def tensor(self, text):
         return torch.tensor(self.encode(text), dtype=torch.long)
