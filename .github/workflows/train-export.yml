@@ -7,38 +7,54 @@ jobs:
   train-export-build:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Train CrazeAI
         run: python train.py
+
       - name: Export native model
         run: python export.py --checkpoint crazeai.pt --output crazeai.craze
+
       - name: Show model sizes
         run: ls -lh crazeai.pt crazeai.craze
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          sdkmanager --update || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1"
+          sdkmanager "ndk;27.2.12479018"
+
       - name: Build CrazeAI Android APK
         working-directory: android
         run: |
           chmod +x gradlew 2>/dev/null || true
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
       - name: Collect release files
         run: |
           mkdir -p output
@@ -46,6 +62,7 @@ jobs:
           cp crazeai.pt output/
           find android/app/build/outputs/apk -name "*.apk" -exec cp {} output/CrazeAI-debug.apk \;
           ls -lh output/
+
       - name: Upload CrazeAI package
         uses: actions/upload-artifact@v4
         with:
