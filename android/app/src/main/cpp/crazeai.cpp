@@ -1,204 +1,152 @@
 #include <jni.h>
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <fstream>
+#include <android/log.h>
 #include <string>
-#include <unordered_map>
 #include <vector>
+#include <mutex>
+#include "llama.h"
 
-struct Tensor { std::vector<uint32_t> s; std::vector<float> x; };
-static std::unordered_map<std::string,Tensor> M;
-static uint32_t V=0,B=0,D=0,H=0,L=0;
-static bool ready=false;
-static constexpr uint32_t MAX_CTX=256;
+#define TAG "CrazeAI"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-static uint32_t u32(std::ifstream& f){uint32_t x=0;f.read((char*)&x,4);return x;}
-static uint64_t u64(std::ifstream& f){uint64_t x=0;f.read((char*)&x,8);return x;}
-static const Tensor& t(const std::string& n){return M.at(n);}
+static std::mutex g_mutex;
+static llama_model *g_model = nullptr;
+static llama_context *g_ctx = nullptr;
+static const llama_vocab *g_vocab = nullptr;
 
-static void lin(const Tensor&w,const Tensor&b,const float*a,float*z,uint32_t o,uint32_t i){
-    for(uint32_t r=0;r<o;r++){
-        float q=b.x[r]; const float*p=w.x.data()+size_t(r)*i;
-        for(uint32_t k=0;k<i;k++)q+=p[k]*a[k];
-        z[r]=q;
+static void unload_locked() {
+    if (g_ctx) {
+        llama_free(g_ctx);
+        g_ctx = nullptr;
     }
-}
-
-static void ln(const Tensor&w,const Tensor&b,const float*a,float*z){
-    double m=0,v=0;
-    for(uint32_t i=0;i<D;i++)m+=a[i];
-    m/=D;
-    for(uint32_t i=0;i<D;i++){double q=a[i]-m;v+=q*q;}
-    v/=D;
-    float inv=1.f/std::sqrt(float(v)+1e-5f);
-    for(uint32_t i=0;i<D;i++)z[i]=(a[i]-float(m))*inv*w.x[i]+b.x[i];
-}
-
-static float gelu(float x){
-    return .5f*x*(1.f+std::tanh(.79788456f*(x+.044715f*x*x*x)));
-}
-
-static bool load(const std::string&p){
-    std::ifstream f(p,std::ios::binary); if(!f)return false;
-    char magic[8]; f.read(magic,8);
-    if(std::string(magic,8)!="CRAZEAI1"||u32(f)!=1)return false;
-    V=u32(f);B=u32(f);D=u32(f);L=u32(f);H=u32(f);uint32_t n=u32(f);
-    if(V!=258||!B||!D||!H||D%H||B>4096)return false;
-    M.clear();
-    for(uint32_t k=0;k<n;k++){
-        uint32_t nl=u32(f);std::string name(nl,'\0');f.read(name.data(),nl);
-        uint32_t nd=u32(f);Tensor q;q.s.resize(nd);uint64_t ne=1;
-        for(uint32_t i=0;i<nd;i++){q.s[i]=u32(f);ne*=q.s[i];}
-        uint64_t bytes=u64(f);if(bytes!=ne*4)return false;
-        q.x.resize((size_t)ne);f.read((char*)q.x.data(),(std::streamsize)bytes);
-        if(!f)return false;M.emplace(name,std::move(q));
+    if (g_model) {
+        llama_model_free(g_model);
+        g_model = nullptr;
     }
-    ready=true;return true;
+    g_vocab = nullptr;
 }
 
-static std::vector<float> step(uint32_t token,uint32_t pos,
-                               std::vector<std::vector<float>>&kc,
-                               std::vector<std::vector<float>>&vc){
-    const uint32_t HD=D/H;
-    std::vector<float>x(D),norm(D),qkv(3*D),q(D),k(D),v(D);
-    const auto&tw=t("tok.weight");const auto&pw=t("pos.weight");
-    for(uint32_t d=0;d<D;d++)x[d]=tw.x[(size_t)token*D+d]+pw.x[(size_t)pos*D+d];
-
-    for(uint32_t li=0;li<L;li++){
-        const std::string p="blocks."+std::to_string(li)+".";
-        const auto&ln1w=t(p+"ln1.weight");const auto&ln1b=t(p+"ln1.bias");
-        const auto&qkvw=t(p+"attn.qkv.weight");const auto&qkvb=t(p+"attn.qkv.bias");
-        const auto&ow=t(p+"attn.proj.weight");const auto&ob=t(p+"attn.proj.bias");
-
-        ln(ln1w,ln1b,x.data(),norm.data());
-        lin(qkvw,qkvb,norm.data(),qkv.data(),3*D,D);
-        std::copy(qkv.begin(),qkv.begin()+D,q.begin());
-        std::copy(qkv.begin()+D,qkv.begin()+2*D,k.begin());
-        std::copy(qkv.begin()+2*D,qkv.end(),v.begin());
-
-        const size_t base=(size_t)pos*D;
-        for(uint32_t d=0;d<D;d++){kc[li][base+d]=k[d];vc[li][base+d]=v[d];}
-
-        std::vector<float>att(D);const float scale=1.f/std::sqrt((float)HD);
-        for(uint32_t h=0;h<H;h++){
-            uint32_t qb=h*HD;std::vector<float>scores(pos+1);float mx=-1e30f;
-            for(uint32_t j=0;j<=pos;j++){
-                size_t jb=(size_t)j*D+qb;float s=0.f;
-                for(uint32_t d=0;d<HD;d++)s+=q[qb+d]*kc[li][jb+d];
-                scores[j]=s*scale;mx=std::max(mx,scores[j]);
-            }
-            float sum=0.f;for(float&s:scores){s=std::exp(s-mx);sum+=s;}
-            float inv=1.f/sum;
-            for(uint32_t d=0;d<HD;d++){
-                float z=0.f;
-                for(uint32_t j=0;j<=pos;j++)z+=scores[j]*inv*vc[li][(size_t)j*D+qb+d];
-                att[qb+d]=z;
-            }
-        }
-
-        std::vector<float>proj(D);lin(ow,ob,att.data(),proj.data(),D,D);
-        for(uint32_t d=0;d<D;d++)x[d]+=proj[d];
-
-        const auto&ln2w=t(p+"ln2.weight");const auto&ln2b=t(p+"ln2.bias");
-        const auto&w1=t(p+"mlp.0.weight");const auto&b1=t(p+"mlp.0.bias");
-        const auto&w2=t(p+"mlp.2.weight");const auto&b2=t(p+"mlp.2.bias");
-        std::vector<float>hid(4*D),out(D);
-        ln(ln2w,ln2b,x.data(),norm.data());lin(w1,b1,norm.data(),hid.data(),4*D,D);
-        for(float&z:hid)z=gelu(z);lin(w2,b2,hid.data(),out.data(),D,4*D);
-        for(uint32_t d=0;d<D;d++)x[d]+=out[d];
-    }
-
-    std::vector<float>last(D),logits(V);
-    ln(t("ln.weight"),t("ln.bias"),x.data(),last.data());
-    for(uint32_t id=0;id<V;id++){
-        float z=0.f;const float*r=tw.x.data()+(size_t)id*D;
-        for(uint32_t d=0;d<D;d++)z+=r[d]*last[d];
-        logits[id]=z;
-    }
-    return logits;
-}
-
-static bool repeated_single_token(const std::string& s, int window = 12) {
-    if ((int)s.size() < window) return false;
-    char last = s.back();
-    for (int i = 1; i < window; ++i)
-        if (s[s.size() - 1 - i] != last) return false;
-    return true;
-}
-
-static bool repeated_short_pattern(const std::string& s) {
-    if (s.size() < 24) return false;
-    size_t n = s.size();
-    for (int i = 0; i < 8; ++i)
-        if (s[n - 24 + i] != s[n - 16 + i] ||
-            s[n - 24 + i] != s[n - 8 + i]) return false;
-    return true;
-}
-
-static std::string run(const std::string&userPrompt,int max,float){
-    if(!ready)return "Load a .craze model first.";
-
-    // Match the exact instruction format used by the training dataset.
-    std::string prompt="### Instruction:\n"+userPrompt+
-                       "\n### Input:\n\n### Output:\n";
-
-    std::vector<uint32_t>ids(1,256);
-    for(unsigned char c:prompt)ids.push_back((uint32_t)c);
-    if(ids.size()>MAX_CTX-1)
-        ids.erase(ids.begin()+1,ids.end()-(MAX_CTX-1));
-
-    std::vector<std::vector<float>>kc(L,std::vector<float>((size_t)MAX_CTX*D,0.f));
-    std::vector<std::vector<float>>vc(L,std::vector<float>((size_t)MAX_CTX*D,0.f));
-    std::vector<float>logits;
-
-    for(size_t i=0;i<ids.size();i++)logits=step(ids[i],(uint32_t)i,kc,vc);
-
+static std::string utf8_from_tokens(const std::vector<llama_token> &tokens) {
     std::string out;
-    const int limit=std::min(max,48);
+    char buf[256];
+    for (llama_token token : tokens) {
+        int n = llama_token_to_piece(g_vocab, token, buf, sizeof(buf), 0, true);
+        if (n > 0) out.append(buf, n);
+    }
+    return out;
+}
 
-    // Deterministic decoding is much safer for this small, lightly trained model.
-    for(int n=0;n<limit;n++){
-        int pick=0;
-        float best=-1e30f;
-        for(int i=0;i<(int)V;i++){
-            if(logits[i]>best){best=logits[i];pick=i;}
+static std::string generate_locked(const std::string &user, int max_tokens) {
+    const int n_ctx = (int) llama_n_ctx(g_ctx);
+    const std::string prompt =
+        "<|im_start|>system\n"
+        "You are CrazeAI, an AI assistant created by CrazeStudio. "
+        "Your underlying base model is Qwen3-1.7B. Be accurate, useful and concise. "
+        "Do not invent facts when uncertain.<|im_end|>\n"
+        "<|im_start|>user\n" + user +
+        "<|im_end|>\n<|im_start|>assistant\n";
+
+    std::vector<llama_token> prompt_tokens(prompt.size() + 32);
+    int n = llama_tokenize(g_vocab, prompt.c_str(), (int) prompt.size(),
+                           prompt_tokens.data(), (int) prompt_tokens.size(), true, true);
+    if (n < 0) {
+        prompt_tokens.resize(-n);
+        n = llama_tokenize(g_vocab, prompt.c_str(), (int) prompt.size(),
+                           prompt_tokens.data(), (int) prompt_tokens.size(), true, true);
+    }
+    if (n <= 0 || n >= n_ctx - 4) return "Prompt is too long for this model context.";
+    prompt_tokens.resize(n);
+
+    llama_memory_clear(llama_get_memory(g_ctx), true);
+    llama_batch batch = llama_batch_init(n_ctx, 0, 1);
+    batch.n_tokens = 0;
+    for (int i = 0; i < n; ++i) {
+        batch.token[batch.n_tokens] = prompt_tokens[i];
+        batch.pos[batch.n_tokens] = i;
+        batch.n_seq_id[batch.n_tokens] = 1;
+        batch.seq_id[batch.n_tokens][0] = 0;
+        batch.logits[batch.n_tokens] = (i == n - 1);
+        ++batch.n_tokens;
+    }
+
+    if (llama_decode(g_ctx, batch) != 0) {
+        llama_batch_free(batch);
+        return "Model decode failed.";
+    }
+
+    std::string output;
+    const int limit = std::min(max_tokens, n_ctx - n - 1);
+    for (int i = 0; i < limit; ++i) {
+        float * logits = llama_get_logits(g_ctx);
+        const int vocab_size = llama_vocab_n_tokens(g_vocab);
+        llama_token next = 0;
+        float best = -1e30f;
+        for (int t = 0; t < vocab_size; ++t) {
+            if (logits[t] > best) {
+                best = logits[t];
+                next = t;
+            }
         }
 
-        if(pick==257)break;
-        if(pick>=256)break;
+        if (llama_vocab_is_eog(g_vocab, next)) break;
+        const int piece_len = llama_token_to_piece(g_vocab, next, nullptr, 0, 0, true);
+        if (piece_len > 0) {
+            std::vector<char> piece((size_t) piece_len + 1);
+            int got = llama_token_to_piece(g_vocab, next, piece.data(), piece_len, 0, true);
+            if (got > 0) output.append(piece.data(), got);
+        }
 
-        out.push_back((char)pick);
-
-        if (repeated_single_token(out) || repeated_short_pattern(out)) break;
-
-        uint32_t pos=(uint32_t)ids.size();
-        if(pos>=MAX_CTX)break;
-        ids.push_back((uint32_t)pick);
-        logits=step((uint32_t)pick,pos,kc,vc);
+        batch.n_tokens = 0;
+        batch.token[0] = next;
+        batch.pos[0] = n + i;
+        batch.n_seq_id[0] = 1;
+        batch.seq_id[0][0] = 0;
+        batch.logits[0] = true;
+        batch.n_tokens = 1;
+        if (llama_decode(g_ctx, batch) != 0) break;
     }
 
-    // Remove obvious control bytes from malformed generations.
-    std::string clean;
-    for(unsigned char c:out){
-        if(c=='\n'||c=='\r'||c=='\t'||(c>=32&&c<127))clean.push_back((char)c);
-    }
-    if (clean.empty()) return "No useful response generated yet.";
-    return clean;
+    llama_batch_free(batch);
+    return output.empty() ? "No response generated." : output;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_ai_craze_runtime_MainActivity_loadModel(JNIEnv*e,jobject,jstring path){
-    const char*p=e->GetStringUTFChars(path,nullptr);
-    bool ok=p&&load(p);if(p)e->ReleaseStringUTFChars(path,p);
-    return ok?JNI_TRUE:JNI_FALSE;
+Java_ai_craze_runtime_MainActivity_loadModel(JNIEnv *env, jobject, jstring path) {
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (!p) return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    unload_locked();
+
+    llama_model_params mp = llama_model_default_params();
+    mp.n_gpu_layers = 0;
+    g_model = llama_model_load_from_file(p, mp);
+    env->ReleaseStringUTFChars(path, p);
+    if (!g_model) {
+        LOGE("Failed to load GGUF model");
+        return JNI_FALSE;
+    }
+
+    llama_context_params cp = llama_context_default_params();
+    cp.n_ctx = 2048;
+    cp.n_batch = 512;
+    cp.n_threads = 4;
+    cp.n_threads_batch = 4;
+    g_ctx = llama_init_from_model(g_model, cp);
+    if (!g_ctx) {
+        unload_locked();
+        LOGE("Failed to create llama context");
+        return JNI_FALSE;
+    }
+    g_vocab = llama_model_get_vocab(g_model);
+    LOGE("GGUF model loaded successfully");
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_ai_craze_runtime_MainActivity_generate(JNIEnv*e,jobject,jstring prompt,jint max,jfloat temp){
-    if(!ready)return e->NewStringUTF("Load a .craze model first.");
-    const char*p=e->GetStringUTFChars(prompt,nullptr);
-    std::string r=run(p?p:"",(int)max,(float)temp);
-    if(p)e->ReleaseStringUTFChars(prompt,p);
-    return e->NewStringUTF(r.c_str());
+Java_ai_craze_runtime_MainActivity_generate(JNIEnv *env, jobject, jstring prompt, jint max, jfloat) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_ctx || !g_vocab) return env->NewStringUTF("Load a GGUF model first.");
+    const char *p = env->GetStringUTFChars(prompt, nullptr);
+    std::string result = generate_locked(p ? p : "", max > 0 ? max : 256);
+    if (p) env->ReleaseStringUTFChars(prompt, p);
+    return env->NewStringUTF(result.c_str());
 }
