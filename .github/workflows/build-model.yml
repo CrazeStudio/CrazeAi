@@ -1,4 +1,4 @@
-name: Build CrazeAI GGUF
+name: Build CrazeAI Model
 
 on:
   workflow_dispatch:
@@ -10,66 +10,65 @@ permissions:
   contents: write
 
 jobs:
-  build-model:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Free disk space
         run: |
           sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/share/dotnet
           df -h
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git cmake build-essential python3 python3-pip python3-venv curl
+          sudo apt-get install -y git cmake build-essential python3 python3-pip python3-venv
 
-      - name: Clone llama.cpp
-        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
-
-      - name: Build llama.cpp
+      - name: Build llama.cpp conversion tools
         run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
           cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
-          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize
+          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
 
-      - name: Create Python environment
+      - name: Install converter dependencies
         run: |
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip
           pip install -r llama.cpp/requirements.txt
+          pip install huggingface_hub
 
-      - name: Download Qwen3-1.7B
+      - name: Download Qwen3-1.7B template model
         run: |
           . .venv/bin/activate
-          huggingface-cli download Qwen/Qwen3-1.7B --local-dir qwen3 --local-dir-use-symlinks False
+          hf download Qwen/Qwen3-1.7B --local-dir qwen3
 
-      - name: Convert to GGUF
+      - name: Convert using Qwen3 architecture and tokenizer
         run: |
           . .venv/bin/activate
           python llama.cpp/convert_hf_to_gguf.py qwen3 --outfile qwen3-f16.gguf --outtype f16
 
-      - name: Quantize Q4_K_M
+      - name: Create lightweight CrazeAI model
         run: |
           mkdir -p release
           llama.cpp/build/bin/llama-quantize qwen3-f16.gguf release/crazeai-qwen3-1.7b-q4_k_m.gguf Q4_K_M
           ls -lh release/crazeai-qwen3-1.7b-q4_k_m.gguf
 
-      - name: Upload model artifact
+      - name: Verify real chat generation
+        run: |
+          llama.cpp/build/bin/llama-cli \
+            -m release/crazeai-qwen3-1.7b-q4_k_m.gguf \
+            --jinja \
+            -sys 'You are CrazeAI, a helpful and concise AI assistant.' \
+            -p 'Hello. What is HTML?' \
+            -n 64 \
+            --no-display-prompt
+
+      - name: Upload CrazeAI model
         uses: actions/upload-artifact@v4
         with:
           name: crazeai-qwen3-1.7b-q4_k_m
           path: release/crazeai-qwen3-1.7b-q4_k_m.gguf
-          retention-days: 7
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: qwen3-1.7b-q4_k_m
-          name: CrazeAI Qwen3 1.7B Q4_K_M
-          prerelease: true
-          files: release/crazeai-qwen3-1.7b-q4_k_m.gguf
-          generate_release_notes: false
+          retention-days: 30
