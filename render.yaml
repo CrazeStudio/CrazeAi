@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: crazeai
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt && git clone --depth 1 https://github.com/ggml-org/llama.cpp.git && cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF && cmake --build llama.cpp/build -j2 --target llama-server
+    startCommand: bash backend/start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
