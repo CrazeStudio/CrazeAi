@@ -3,13 +3,31 @@ plugins { id 'com.android.application' }
 android {
     namespace 'ai.craze.runtime'
     compileSdk 35
+
     defaultConfig {
         applicationId 'ai.craze.runtime'
         minSdk 26
         targetSdk 35
         versionCode 1
         versionName '1.0'
-        externalNativeBuild { cmake { cppFlags '-O3 -ffast-math' } }
+
+        // CrazeAI targets modern 64-bit Android devices. llama.cpp's
+        // current CPU backend does not build cleanly for armeabi-v7a.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+
+        // Do NOT use -ffast-math: ggml requires IEEE non-finite math.
+        externalNativeBuild {
+            cmake {
+                cppFlags '-O3 -fno-finite-math-only -fomit-frame-pointer'
+            }
+        }
     }
-    externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt' } }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+        }
+    }
 }
