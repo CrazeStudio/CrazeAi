@@ -18,7 +18,7 @@ jobs:
 
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/local/lib/node_modules /usr/share/dotnet
           df -h
 
       - name: Install dependencies
@@ -30,7 +30,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
           cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF
-          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize
+          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
 
       - name: Install converter dependencies
         run: |
@@ -39,10 +39,22 @@ jobs:
           pip install --upgrade pip
           pip install -r llama.cpp/requirements.txt huggingface_hub
 
-      - name: Download Qwen3-1.7B base model
+      - name: Download Qwen3-1.7B
         run: |
           . .venv/bin/activate
           hf download Qwen/Qwen3-1.7B --local-dir qwen3
+
+      - name: Create CrazeAI identity configuration
+        run: |
+          cat > crazeai-system.txt <<'EOF'
+You are CrazeAI, an AI assistant created by CrazeStudio.
+
+Your underlying pretrained base model is Qwen3-1.7B. Do not claim that you were trained from scratch by CrazeStudio. Your assistant identity is CrazeAI.
+
+You are helpful, accurate, concise, and natural. You can answer general questions, explain concepts, help with programming, mathematics, writing, learning, and problem solving. If you do not know something, say so instead of inventing facts.
+
+When asked who you are, say that you are CrazeAI, created by CrazeStudio and based on Qwen3-1.7B.
+EOF
 
       - name: Convert to GGUF
         run: |
@@ -53,11 +65,12 @@ jobs:
         run: |
           mkdir -p release
           llama.cpp/build/bin/llama-quantize qwen3-f16.gguf release/crazeai-qwen3-1.7b-q4_k_m.gguf Q4_K_M
-          ls -lh release/crazeai-qwen3-1.7b-q4_k_m.gguf
+          cp crazeai-system.txt release/crazeai-system.txt
+          ls -lh release/
 
       - name: Upload CrazeAI model
         uses: actions/upload-artifact@v4
         with:
           name: crazeai-qwen3-1.7b-q4_k_m
-          path: release/crazeai-qwen3-1.7b-q4_k_m.gguf
+          path: release/
           retention-days: 30
