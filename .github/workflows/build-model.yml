@@ -1,0 +1,75 @@
+name: Build CrazeAI GGUF
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-model.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/share/dotnet
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git cmake build-essential python3 python3-pip python3-venv curl
+
+      - name: Clone llama.cpp
+        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
+
+      - name: Build llama.cpp
+        run: |
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize
+
+      - name: Create Python environment
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r llama.cpp/requirements.txt
+
+      - name: Download Qwen3-1.7B
+        run: |
+          . .venv/bin/activate
+          huggingface-cli download Qwen/Qwen3-1.7B --local-dir qwen3 --local-dir-use-symlinks False
+
+      - name: Convert to GGUF
+        run: |
+          . .venv/bin/activate
+          python llama.cpp/convert_hf_to_gguf.py qwen3 --outfile qwen3-f16.gguf --outtype f16
+
+      - name: Quantize Q4_K_M
+        run: |
+          mkdir -p release
+          llama.cpp/build/bin/llama-quantize qwen3-f16.gguf release/crazeai-qwen3-1.7b-q4_k_m.gguf Q4_K_M
+          ls -lh release/crazeai-qwen3-1.7b-q4_k_m.gguf
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crazeai-qwen3-1.7b-q4_k_m
+          path: release/crazeai-qwen3-1.7b-q4_k_m.gguf
+          retention-days: 7
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: qwen3-1.7b-q4_k_m
+          name: CrazeAI Qwen3 1.7B Q4_K_M
+          prerelease: true
+          files: release/crazeai-qwen3-1.7b-q4_k_m.gguf
+          generate_release_notes: false
