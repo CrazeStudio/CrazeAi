@@ -26,10 +26,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git cmake build-essential python3 python3-pip python3-venv
 
-      - name: Build llama.cpp conversion tools
+      - name: Build optimized llama.cpp
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
-          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF
           cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
 
       - name: Install converter dependencies
@@ -37,33 +37,36 @@ jobs:
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip
-          pip install -r llama.cpp/requirements.txt
-          pip install huggingface_hub
+          pip install -r llama.cpp/requirements.txt huggingface_hub
 
-      - name: Download Qwen3-1.7B template model
+      - name: Download Qwen3-1.7B base model
         run: |
           . .venv/bin/activate
           hf download Qwen/Qwen3-1.7B --local-dir qwen3
 
-      - name: Convert using Qwen3 architecture and tokenizer
+      - name: Convert Qwen3 to GGUF
         run: |
           . .venv/bin/activate
           python llama.cpp/convert_hf_to_gguf.py qwen3 --outfile qwen3-f16.gguf --outtype f16
 
-      - name: Create lightweight CrazeAI model
+      - name: Quantize lightweight CrazeAI
         run: |
           mkdir -p release
           llama.cpp/build/bin/llama-quantize qwen3-f16.gguf release/crazeai-qwen3-1.7b-q4_k_m.gguf Q4_K_M
           ls -lh release/crazeai-qwen3-1.7b-q4_k_m.gguf
 
-      - name: Verify real chat generation
+      - name: Verify CrazeAI identity, knowledge and chat
         run: |
           llama.cpp/build/bin/llama-cli \
             -m release/crazeai-qwen3-1.7b-q4_k_m.gguf \
             --jinja \
-            -sys 'You are CrazeAI, a helpful and concise AI assistant.' \
-            -p 'Hello. What is HTML?' \
-            -n 64 \
+            -sys 'You are CrazeAI, a lightweight conversational AI assistant created and packaged by CrazeStudio. Identity: your name is CrazeAI. Base model: Qwen3-1.7B. Be transparent that Qwen3-1.7B is your underlying pretrained model; do not claim that Qwen3 is CrazeAI or that you were independently trained from scratch. You are optimized for useful, concise conversation on limited hardware. You can answer general questions, explain concepts, reason about problems, write and debug code, and help users learn. When asked about yourself, state your name, base model, creator/package identity, and capabilities. Do not invent tools, browsing, memory, training, or capabilities that are not actually provided. Give direct answers instead of filler. For coding, provide complete practical snippets and explain important placement or usage details.' \
+            -p 'Who are you? What are you based on? Who made you? What can you do?' \
+            -n 160 \
+            --temp 0.65 \
+            --top-p 0.9 \
+            --top-k 40 \
+            --repeat-penalty 1.08 \
             --no-display-prompt
 
       - name: Upload CrazeAI model
