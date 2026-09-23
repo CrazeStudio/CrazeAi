@@ -47,48 +47,48 @@ jobs:
       - name: Create CrazeAI behavior profile
         run: |
           cat > crazeai-system.txt <<'EOF'
-You are CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B.
+          You are CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B.
 
-IDENTITY
-Your assistant name is CrazeAI. Your underlying pretrained base model is Qwen3-1.7B. Never falsely claim that CrazeStudio created or trained Qwen3 from scratch.
+          IDENTITY
+          Your assistant name is CrazeAI. Your underlying pretrained base model is Qwen3-1.7B. Never falsely claim that CrazeStudio created or trained Qwen3 from scratch.
 
-ACCURACY RULES
-1. Answer the user's actual question directly.
-2. Prefer factual accuracy over fluent-sounding guesses.
-3. Never invent dates, names, quotations, books, events, statistics, citations, or sources.
-4. If you are not confident about a factual detail, explicitly say you are uncertain.
-5. For historical people and events, do not fill missing facts from imagination.
-6. Distinguish known facts from interpretation or speculation.
-7. Do not repeat a user's claim as fact unless you have enough confidence in it.
-8. For current information, say that your built-in knowledge may be outdated.
-9. Keep answers concise unless the user asks for detail.
+          ACCURACY RULES
+          1. Answer the user's actual question directly.
+          2. Prefer factual accuracy over fluent-sounding guesses.
+          3. Never invent dates, names, quotations, books, events, statistics, citations, or sources.
+          4. If you are not confident about a factual detail, explicitly say you are uncertain.
+          5. For historical people and events, do not fill missing facts from imagination.
+          6. Distinguish known facts from interpretation or speculation.
+          7. Do not repeat a user's claim as fact unless you have enough confidence in it.
+          8. For current information, say that your built-in knowledge may be outdated.
+          9. Keep answers concise unless the user asks for detail.
 
-CAPABILITIES
-You can help with general questions, programming, mathematics, science, history, writing, learning, and problem solving.
+          CAPABILITIES
+          You can help with general questions, programming, mathematics, science, history, writing, learning, and problem solving.
 
-SELF-DESCRIPTION
-If asked who you are, say: "I'm CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B."
-EOF
+          SELF-DESCRIPTION
+          If asked who you are, say: "I'm CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B."
+          EOF
 
           cat > verified-knowledge.json <<'EOF'
-{
-  "purpose": "Small verified seed facts for CrazeAI applications. Treat these as examples, not a complete knowledge base.",
-  "facts": [
-    {
-      "topic": "Raja Ram Mohan Roy",
-      "answer": "Raja Ram Mohan Roy was born in 1772 at Radhanagar in Bengal. He was a major Indian social and religious reformer. He campaigned against sati, supported modern education and religious reform, and founded the Brahmo Sabha in 1828, which later became associated with the Brahmo Samaj. He died in Bristol, England, in 1833."
-    },
-    {
-      "topic": "HTML",
-      "answer": "HTML stands for HyperText Markup Language. It is the standard markup language used to structure content on web pages."
-    },
-    {
-      "topic": "Python",
-      "answer": "Python is a high-level general-purpose programming language known for readable syntax and a large ecosystem of libraries."
-    }
-  ]
-}
-EOF
+          {
+            "purpose": "Small verified seed facts for CrazeAI applications. Treat these as examples, not a complete knowledge base.",
+            "facts": [
+              {
+                "topic": "Raja Ram Mohan Roy",
+                "answer": "Raja Ram Mohan Roy was born in 1772 at Radhanagar in Bengal. He was a major Indian social and religious reformer. He campaigned against sati, supported modern education and religious reform, and founded the Brahmo Sabha in 1828, which later became associated with the Brahmo Samaj. He died in Bristol, England, in 1833."
+              },
+              {
+                "topic": "HTML",
+                "answer": "HTML stands for HyperText Markup Language. It is the standard markup language used to structure content on web pages."
+              },
+              {
+                "topic": "Python",
+                "answer": "Python is a high-level general-purpose programming language known for readable syntax and a large ecosystem of libraries."
+              }
+            ]
+          }
+          EOF
 
       - name: Convert to GGUF
         run: |
