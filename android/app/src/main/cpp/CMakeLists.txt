@@ -20,7 +20,17 @@ FetchContent_MakeAvailable(llama)
 
 add_library(crazeai SHARED crazeai.cpp)
 target_compile_features(crazeai PRIVATE cxx_std_17)
-target_compile_options(crazeai PRIVATE -O3 -ffast-math -fomit-frame-pointer)
+
+# llama.cpp/ggml requires IEEE non-finite math support. Do not use
+# -ffast-math here because Clang enables -ffinite-math-only with it.
+target_compile_options(crazeai PRIVATE -O3 -fno-finite-math-only -fomit-frame-pointer)
+
+# FetchContent's ggml CPU targets are compiled separately; apply the same
+# required compiler flag to them as well.
+target_compile_options(ggml PRIVATE -fno-finite-math-only)
+target_compile_options(ggml-base PRIVATE -fno-finite-math-only)
+target_compile_options(ggml-cpu PRIVATE -fno-finite-math-only)
+target_compile_options(llama PRIVATE -fno-finite-math-only)
 
 target_include_directories(crazeai PRIVATE ${llama_SOURCE_DIR}/include ${llama_SOURCE_DIR}/ggml/include)
 target_link_libraries(crazeai PRIVATE llama log)
