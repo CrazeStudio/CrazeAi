@@ -43,7 +43,11 @@ static std::string generate_locked(const std::string &user, int max_tokens) {
     prompt_tokens.resize(n);
 
     llama_memory_clear(llama_get_memory(g_ctx), true);
-    llama_batch batch = llama_batch_init(128, 0, 1);
+
+    // llama_batch has no n_batch field in current llama.cpp versions.
+    // The capacity is the value supplied to llama_batch_init().
+    constexpr int batch_capacity = 128;
+    llama_batch batch = llama_batch_init(batch_capacity, 0, 1);
     batch.n_tokens = 0;
     for (int i = 0; i < n; ++i) {
         batch.token[batch.n_tokens] = prompt_tokens[i];
@@ -52,7 +56,7 @@ static std::string generate_locked(const std::string &user, int max_tokens) {
         batch.seq_id[batch.n_tokens][0] = 0;
         batch.logits[batch.n_tokens] = (i == n - 1);
         ++batch.n_tokens;
-        if (batch.n_tokens == batch.n_batch) {
+        if (batch.n_tokens == batch_capacity) {
             if (llama_decode(g_ctx, batch) != 0) {
                 llama_batch_free(batch);
                 return "Model decode failed while processing the prompt.";
@@ -66,11 +70,15 @@ static std::string generate_locked(const std::string &user, int max_tokens) {
     }
 
     llama_sampler *sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    if (!sampler) {
+        llama_batch_free(batch);
+        return "Failed to initialize the text sampler.";
+    }
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
     std::string output;
-    // Mobile safety cap: never allow a normal chat request to accidentally generate
-    // hundreds/thousands of tokens and appear stuck for a very long time.
+    // Mobile safety cap: keep ordinary requests responsive instead of allowing
+    // accidental very long generations on a phone.
     const int limit = std::max(16, std::min(max_tokens, std::min(96, n_ctx - n - 1)));
     for (int i = 0; i < limit; ++i) {
         const llama_token next = llama_sampler_sample(sampler, g_ctx, -1);
@@ -90,7 +98,10 @@ static std::string generate_locked(const std::string &user, int max_tokens) {
         batch.n_seq_id[0] = 1;
         batch.seq_id[0][0] = 0;
         batch.logits[0] = true;
-        if (llama_decode(g_ctx, batch) != 0) break;
+        if (llama_decode(g_ctx, batch) != 0) {
+            LOGE("Decode failed during token generation at token %d", i);
+            break;
+        }
     }
 
     llama_sampler_free(sampler);
