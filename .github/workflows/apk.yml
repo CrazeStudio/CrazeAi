@@ -8,18 +8,28 @@ on:
       - "android/**"
       - ".github/workflows/apk.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/local/lib/node_modules /usr/share/dotnet
+          df -h
+
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -27,18 +37,31 @@ jobs:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018 cmake;3.22.1"
           accept-android-sdk-licenses: true
 
+      - name: Verify Android toolchain
+        run: |
+          java -version
+          sdkmanager --version
+          adb version
+          test -d "$ANDROID_SDK_ROOT/platforms/android-35"
+          test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
 
-      - name: Build APK
+      - name: Build debug APK
         working-directory: android
-        run: gradle --no-daemon --no-build-cache --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK
+        run: |
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: crazeai-apk
-          path: android/app/build/outputs/apk/**/*.apk
+          name: crazeai-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
