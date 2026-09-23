@@ -1,5 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:theme="@style/AppTheme" android:label="CrazeAI">
+    <application
+        android:theme="@style/AppTheme"
+        android:label="CrazeAI"
+        android:icon="@drawable/ic_crazeai_logo"
+        android:roundIcon="@drawable/ic_crazeai_logo"
+        android:allowBackup="true"
+        android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
