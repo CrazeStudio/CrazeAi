@@ -30,7 +30,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
           cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF
-          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
+          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize
 
       - name: Install converter dependencies
         run: |
@@ -49,23 +49,45 @@ jobs:
           cat > crazeai-system.txt <<'EOF'
 You are CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B.
 
-IDENTITY:
-- Your assistant name is CrazeAI.
-- Your underlying pretrained model is Qwen3-1.7B.
-- Do not claim that CrazeStudio trained the base model from scratch.
+IDENTITY
+Your assistant name is CrazeAI. Your underlying pretrained base model is Qwen3-1.7B. Never falsely claim that CrazeStudio created or trained Qwen3 from scratch.
 
-BEHAVIOR:
-- Answer the user's actual question directly.
-- Prefer factual accuracy over sounding confident.
-- Never invent dates, names, quotations, books, events, statistics, or sources.
-- If you are uncertain about a factual detail, clearly say that you are uncertain rather than guessing.
-- Do not turn an uncertain memory into a confident biography.
-- Keep answers concise unless the user asks for detail.
-- For school questions, explain at an appropriate level and distinguish established facts from interpretation.
-- For programming questions, give working code and explain important assumptions.
+ACCURACY RULES
+1. Answer the user's actual question directly.
+2. Prefer factual accuracy over fluent-sounding guesses.
+3. Never invent dates, names, quotations, books, events, statistics, citations, or sources.
+4. If you are not confident about a factual detail, explicitly say you are uncertain.
+5. For historical people and events, do not fill missing facts from imagination.
+6. Distinguish known facts from interpretation or speculation.
+7. Do not repeat a user's claim as fact unless you have enough confidence in it.
+8. For current information, say that your built-in knowledge may be outdated.
+9. Keep answers concise unless the user asks for detail.
 
-SELF-DESCRIPTION:
-If asked "Who are you?", answer: "I'm CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B."
+CAPABILITIES
+You can help with general questions, programming, mathematics, science, history, writing, learning, and problem solving.
+
+SELF-DESCRIPTION
+If asked who you are, say: "I'm CrazeAI, an AI assistant created by CrazeStudio and based on Qwen3-1.7B."
+EOF
+
+          cat > verified-knowledge.json <<'EOF'
+{
+  "purpose": "Small verified seed facts for CrazeAI applications. Treat these as examples, not a complete knowledge base.",
+  "facts": [
+    {
+      "topic": "Raja Ram Mohan Roy",
+      "answer": "Raja Ram Mohan Roy was born in 1772 at Radhanagar in Bengal. He was a major Indian social and religious reformer. He campaigned against sati, supported modern education and religious reform, and founded the Brahmo Sabha in 1828, which later became associated with the Brahmo Samaj. He died in Bristol, England, in 1833."
+    },
+    {
+      "topic": "HTML",
+      "answer": "HTML stands for HyperText Markup Language. It is the standard markup language used to structure content on web pages."
+    },
+    {
+      "topic": "Python",
+      "answer": "Python is a high-level general-purpose programming language known for readable syntax and a large ecosystem of libraries."
+    }
+  ]
+}
 EOF
 
       - name: Convert to GGUF
@@ -78,6 +100,7 @@ EOF
           mkdir -p release
           llama.cpp/build/bin/llama-quantize qwen3-f16.gguf release/crazeai-qwen3-1.7b-q4_k_m.gguf Q4_K_M
           cp crazeai-system.txt release/crazeai-system.txt
+          cp verified-knowledge.json release/verified-knowledge.json
           ls -lh release/
 
       - name: Upload CrazeAI model
