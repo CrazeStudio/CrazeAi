@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+  ANDROID_HOME: ${{ runner.temp }}/android-sdk
+
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
@@ -21,7 +25,11 @@ jobs:
 
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /usr/local/lib/node_modules /usr/share/dotnet
+          sudo rm -rf /usr/local/share/powershell /usr/local/lib/node_modules /usr/share/dotnet
+          mkdir -p "$ANDROID_SDK_ROOT"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
           df -h
 
       - name: Setup Java 17
@@ -44,6 +52,7 @@ jobs:
           adb version
           test -d "$ANDROID_SDK_ROOT/platforms/android-35"
           test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          test -d "$ANDROID_SDK_ROOT/cmake/3.22.1"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
