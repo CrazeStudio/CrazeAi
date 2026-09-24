@@ -7,28 +7,20 @@ import torch.nn.functional as F
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
         super().__init__(); self.weight=nn.Parameter(torch.ones(dim)); self.eps=eps
-    def forward(self,x):
-        return x*torch.rsqrt(x.pow(2).mean(-1,keepdim=True)+self.eps)*self.weight
+    def forward(self,x): return x*torch.rsqrt(x.pow(2).mean(-1,keepdim=True)+self.eps)*self.weight
 
 class RoPE(nn.Module):
     def __init__(self, head_dim, max_seq_len, base=10000.0):
-        super().__init__()
-        inv=1.0/(base**(torch.arange(0,head_dim,2).float()/head_dim))
-        f=torch.outer(torch.arange(max_seq_len).float(),inv)
-        self.register_buffer('cos',f.cos()[None,None],persistent=False)
-        self.register_buffer('sin',f.sin()[None,None],persistent=False)
+        super().__init__(); inv=1.0/(base**(torch.arange(0,head_dim,2).float()/head_dim)); f=torch.outer(torch.arange(max_seq_len).float(),inv)
+        self.register_buffer('cos',f.cos()[None,None],persistent=False); self.register_buffer('sin',f.sin()[None,None],persistent=False)
     def forward(self,x):
-        t=x.size(2); c=self.cos[:,:,:t]; s=self.sin[:,:,:t]
-        a=x[...,::2]; b=x[...,1::2]; y=torch.empty_like(x)
-        y[...,::2]=a*c-b*s; y[...,1::2]=a*s+b*c
-        return y
+        t=x.size(2); c=self.cos[:,:,:t]; s=self.sin[:,:,:t]; a=x[...,::2]; b=x[...,1::2]; y=torch.empty_like(x)
+        y[...,::2]=a*c-b*s; y[...,1::2]=a*s+b*c; return y
 
 class Attention(nn.Module):
     def __init__(self,c):
-        super().__init__(); d=c['n_embd']; h=c['n_head']; kv=c['n_kv_head']; hd=d//h
-        self.h=h; self.kv=kv; self.hd=hd
-        self.q=nn.Linear(d,h*hd,bias=False); self.k=nn.Linear(d,kv*hd,bias=False); self.v=nn.Linear(d,kv*hd,bias=False); self.o=nn.Linear(d,d,bias=False)
-        self.rope=RoPE(hd,c['block_size']); self.dropout=c['dropout']
+        super().__init__(); d=c['n_embd']; h=c['n_head']; kv=c['n_kv_head']; hd=d//h; self.h=h; self.kv=kv; self.hd=hd
+        self.q=nn.Linear(d,h*hd,bias=False); self.k=nn.Linear(d,kv*hd,bias=False); self.v=nn.Linear(d,kv*hd,bias=False); self.o=nn.Linear(d,d,bias=False); self.rope=RoPE(hd,c['block_size']); self.dropout=c['dropout']
     def forward(self,x):
         b,t,_=x.shape; q=self.q(x).view(b,t,self.h,self.hd).transpose(1,2); k=self.k(x).view(b,t,self.kv,self.hd).transpose(1,2); v=self.v(x).view(b,t,self.kv,self.hd).transpose(1,2)
         q=self.rope(q); k=self.rope(k); r=self.h//self.kv
@@ -44,7 +36,8 @@ class SwiGLU(nn.Module):
 class Block(nn.Module):
     def __init__(self,c):
         super().__init__(); self.n1=RMSNorm(c['n_embd']); self.a=Attention(c); self.n2=RMSNorm(c['n_embd']); self.f=SwiGLU(c['n_embd'],c['ffn_dim'],c['dropout'])
-    def forward(self,x): return x+self.a(self.n1(x))+self.f(self.n2(x+self.a(self.n1(x))))
+    def forward(self,x):
+        x=x+self.a(self.n1(x)); return x+self.f(self.n2(x))
 
 class CrazeAI(nn.Module):
     def __init__(self,c):
