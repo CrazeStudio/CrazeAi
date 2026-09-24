@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import time
 from pathlib import Path
 
@@ -15,7 +14,6 @@ from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.trainers import BpeTrainer
 
 from model import VOCAB_SIZE, init_model, loss_fn
-
 
 SPECIAL = ["<pad>", "<unk>", "<bos>", "<eos>"]
 
@@ -35,18 +33,40 @@ def read_texts(path, limit=None):
     return texts
 
 
+def write_tokenizer_metadata(out_path):
+    root = out_path.parent
+    (root / "tokenizer_config.json").write_text(json.dumps({
+        "tokenizer_class": "LlamaTokenizerFast",
+        "bos_token": "<bos>",
+        "eos_token": "<eos>",
+        "unk_token": "<unk>",
+        "pad_token": "<pad>",
+        "model_max_length": 2048,
+    }, indent=2))
+    (root / "special_tokens_map.json").write_text(json.dumps({
+        "bos_token": "<bos>",
+        "eos_token": "<eos>",
+        "unk_token": "<unk>",
+        "pad_token": "<pad>",
+    }, indent=2))
+
+
 def build_tokenizer(data_path, out_path, train_limit=100000):
     out_path = Path(out_path)
     if out_path.exists():
         return Tokenizer.from_file(str(out_path))
     texts = read_texts(data_path, train_limit)
-    tok = Tokenizer(BPE(unk_token="<unk>"))
+    tok = Tokenizer(BPE(unk_token="<unk>", byte_fallback=True))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    trainer = BpeTrainer(vocab_size=VOCAB_SIZE, min_frequency=2, special_tokens=SPECIAL)
+    trainer = BpeTrainer(vocab_size=VOCAB_SIZE, min_frequency=1, special_tokens=SPECIAL)
     tok.train_from_iterator(texts, trainer=trainer, length=len(texts))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tok.save(str(out_path))
+    write_tokenizer_metadata(out_path)
+    actual_vocab = tok.get_vocab_size()
+    if actual_vocab != VOCAB_SIZE:
+        raise RuntimeError(f"Tokenizer produced {actual_vocab} tokens, expected {VOCAB_SIZE}")
     return tok
 
 
@@ -55,18 +75,17 @@ def pack_dataset(data_path, tokenizer, packed_path, max_examples=None, seq_len=5
     meta_path = packed_path.with_suffix(".json")
     if packed_path.exists() and meta_path.exists():
         meta = json.loads(meta_path.read_text())
-        if meta.get("seq_len") == seq_len:
+        if meta.get("seq_len") == seq_len and meta.get("max_examples") == max_examples:
             return np.memmap(packed_path, dtype=np.uint16, mode="r"), meta
 
     eos = tokenizer.token_to_id("<eos>")
     if eos is None:
-        eos = tokenizer.token_to_id("</s>") or 0
+        raise RuntimeError("Tokenizer has no <eos> token")
 
     chunks = []
-    total = 0
+    seen = 0
     with open(data_path, "r", encoding="utf-8") as f:
         batch = []
-        seen = 0
         for line in f:
             if not line.strip():
                 continue
@@ -76,17 +95,16 @@ def pack_dataset(data_path, tokenizer, packed_path, max_examples=None, seq_len=5
                 continue
             batch.append(text)
             seen += 1
-            if max_examples and seen >= max_examples:
-                break
-            if len(batch) >= 2048:
+            if len(batch) >= 2048 or (max_examples and seen >= max_examples):
                 enc = tokenizer.encode_batch(batch)
                 ids = []
                 for e in enc:
                     ids.extend(e.ids)
                     ids.append(eos)
                 chunks.append(np.asarray(ids, dtype=np.uint16))
-                total += len(ids)
                 batch = []
+            if max_examples and seen >= max_examples:
+                break
         if batch:
             enc = tokenizer.encode_batch(batch)
             ids = []
@@ -94,7 +112,6 @@ def pack_dataset(data_path, tokenizer, packed_path, max_examples=None, seq_len=5
                 ids.extend(e.ids)
                 ids.append(eos)
             chunks.append(np.asarray(ids, dtype=np.uint16))
-            total += len(ids)
 
     stream = np.concatenate(chunks) if chunks else np.empty((0,), dtype=np.uint16)
     usable = (len(stream) // (seq_len + 1)) * (seq_len + 1)
@@ -103,7 +120,7 @@ def pack_dataset(data_path, tokenizer, packed_path, max_examples=None, seq_len=5
     mm = np.memmap(packed_path, dtype=np.uint16, mode="w+", shape=stream.shape)
     mm[:] = stream
     mm.flush()
-    meta = {"tokens": int(len(stream)), "seq_len": seq_len, "examples": int(seen)}
+    meta = {"tokens": int(len(stream)), "seq_len": seq_len, "examples": int(seen), "max_examples": max_examples}
     meta_path.write_text(json.dumps(meta, indent=2))
     return np.memmap(packed_path, dtype=np.uint16, mode="r"), meta
 
@@ -112,10 +129,8 @@ def save_params(params, out_dir):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     leaves, treedef = jax.tree_util.tree_flatten(params)
-    arrays = {f"p{i}": np.asarray(x) for i, x in enumerate(leaves)}
-    np.savez(out_dir / "params.npz", **arrays)
-    with open(out_dir / "treedef.txt", "w", encoding="utf-8") as f:
-        f.write(str(treedef))
+    np.savez(out_dir / "params.npz", **{f"p{i}": np.asarray(x) for i, x in enumerate(leaves)})
+    (out_dir / "treedef.txt").write_text(str(treedef), encoding="utf-8")
 
 
 def main():
@@ -131,14 +146,7 @@ def main():
 
     print("JAX devices:", jax.devices())
     backend = jax.default_backend()
-    if args.batch_size:
-        batch_size = args.batch_size
-    elif backend == "tpu":
-        batch_size = 32
-    elif backend == "gpu":
-        batch_size = 16
-    else:
-        batch_size = 4
+    batch_size = args.batch_size or ({"tpu": 32, "gpu": 16}.get(backend, 4))
     print(f"Backend={backend} batch_size={batch_size} seq_len={args.seq_len}")
 
     out = Path(args.output)
@@ -151,8 +159,7 @@ def main():
     if nseq < batch_size:
         raise RuntimeError("Dataset is too small for the selected batch size")
 
-    key = jax.random.PRNGKey(42)
-    params = init_model(key)
+    params = init_model(jax.random.PRNGKey(42))
     tx = optax.adamw(args.lr, b1=0.9, b2=0.95, eps=1e-8, weight_decay=0.1)
     opt_state = tx.init(params)
 
@@ -160,8 +167,7 @@ def main():
     def train_step(params, opt_state, tokens):
         loss, grads = jax.value_and_grad(loss_fn)(params, tokens)
         updates, opt_state = tx.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-        return params, opt_state, loss
+        return optax.apply_updates(params, updates), opt_state, loss
 
     steps_per_epoch = nseq // batch_size
     print(f"Packed tokens={meta['tokens']:,} sequences={nseq:,} steps/epoch={steps_per_epoch:,}")
@@ -169,8 +175,7 @@ def main():
     start = time.time()
     for epoch in range(args.epochs):
         order = np.arange(nseq)
-        if epoch > 0:
-            np.random.default_rng(42 + epoch).shuffle(order)
+        np.random.default_rng(42 + epoch).shuffle(order)
         for b in range(steps_per_epoch):
             idx = order[b * batch_size:(b + 1) * batch_size]
             offsets = idx * (args.seq_len + 1)
@@ -185,6 +190,7 @@ def main():
 
     save_params(params, out)
     tokenizer.save(str(tok_path))
+    write_tokenizer_metadata(tok_path)
     (out / "config.json").write_text(json.dumps({
         "model_type": "llama",
         "architectures": ["LlamaForCausalLM"],
