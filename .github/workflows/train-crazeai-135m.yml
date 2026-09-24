@@ -1,6 +1,11 @@
 name: Train CrazeAI 135M -> GGUF Q4
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "training_v2/**"
+      - ".github/workflows/train-crazeai-135m.yml"
   workflow_dispatch:
     inputs:
       max_examples:
@@ -15,9 +20,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: crazeai-training
+  cancel-in-progress: true
+
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,8 +37,6 @@ jobs:
 
   train-and-quantize:
     needs: validate
-    # Full SFT is intentionally NOT run on a normal GitHub-hosted CPU runner.
-    # Attach a CUDA runner with labels: self-hosted, linux, x64, gpu.
     runs-on: [self-hosted, linux, x64, gpu]
     timeout-minutes: 1440
     steps:
@@ -57,7 +64,7 @@ jobs:
       - name: Prepare high-quality SFT mixture
         run: |
           python training_v2/prepare_sft.py \
-            --max-examples "${{ inputs.max_examples }}" \
+            --max-examples "${{ inputs.max_examples || '150000' }}" \
             --output artifacts/sft.jsonl
 
       - name: Fine-tune 135M base model
@@ -65,7 +72,7 @@ jobs:
           python training_v2/train_sft.py \
             --data artifacts/sft.jsonl \
             --output artifacts/crazeai-135m \
-            --epochs "${{ inputs.epochs }}"
+            --epochs "${{ inputs.epochs || '2' }}"
 
       - name: Evaluate CrazeAI
         run: |
@@ -99,6 +106,16 @@ jobs:
           cp training_v2/crazeai-system-prompt.txt artifacts/
           ls -lh artifacts/crazeai-135m-q4_k_m.gguf artifacts/evaluation.json
 
+      - name: Validate GGUF actually generates
+        run: |
+          llama.cpp/build/bin/llama-cli \
+            -m artifacts/crazeai-135m-q4_k_m.gguf \
+            -p "Hello. Reply with exactly: CrazeAI is working." \
+            -n 32 \
+            --temp 0.2 \
+            --no-display-prompt | tee artifacts/smoke-test.txt
+          grep -qi "CrazeAI" artifacts/smoke-test.txt
+
       - name: Upload CrazeAI release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -107,4 +124,5 @@ jobs:
             artifacts/crazeai-135m-q4_k_m.gguf
             artifacts/evaluation.json
             artifacts/crazeai-system-prompt.txt
+            artifacts/smoke-test.txt
           retention-days: 30
