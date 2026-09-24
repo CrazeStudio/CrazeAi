@@ -12,112 +12,115 @@ on:
         required: false
         default: "1"
       seq_len:
-        description: "Packed sequence length"
+        description: "Packed sequence length (256 is faster on CPU)"
         required: false
-        default: "512"
+        default: "256"
       batch_size:
         description: "JAX batch size"
         required: false
-        default: "16"
+        default: "8"
 
 permissions:
   contents: read
 
-# Never cancel an active long training run because another run was started.
 concurrency:
   group: crazeai-training
   cancel-in-progress: false
 
+env:
+  # GitHub-hosted runners are CPU-only. Explicitly select CPU so JAX does not
+  # waste startup time probing incompatible CUDA/PJRT plugins.
+  JAX_PLATFORMS: cpu
+  JAX_ENABLE_X64: "false"
+  PYTHONUNBUFFERED: "1"
+  OMP_NUM_THREADS: "4"
+  MKL_NUM_THREADS: "4"
+  OPENBLAS_NUM_THREADS: "4"
+  XLA_FLAGS: "--xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=4"
+
 jobs:
-  validate:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install lightweight dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir jax tokenizers
-      - name: Syntax check
-        run: python -m compileall training_jax
-
   train-and-quantize:
-    needs: validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 720
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout CrazeAI
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            training_jax/requirements.txt
 
-      - name: Install JAX training stack
+      - name: Install training stack
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir -r training_jax/requirements.txt
+          pip install -r training_jax/requirements.txt
 
-      - name: Show compute backend
+      - name: Verify JAX CPU backend
         run: |
           python - <<'PY'
+          import os
           import jax
-          print("JAX version:", jax.__version__)
-          print("JAX backend:", jax.default_backend())
-          print("JAX devices:", jax.devices())
-          if jax.default_backend() == "cpu":
-              print("WARNING: GitHub-hosted runner has no accelerator; training will be CPU-only.")
+          print("JAX:", jax.__version__)
+          print("Backend:", jax.default_backend())
+          print("Devices:", jax.devices())
+          print("CPU threads:", os.environ.get("OMP_NUM_THREADS"))
           PY
+          python -m compileall training_jax
 
-      - name: Prepare high-quality SFT mixture
+      - name: Prepare SFT data
         run: |
           mkdir -p artifacts
           python training_v2/prepare_sft.py \
             --max-examples "${{ inputs.max_examples || '150000' }}" \
             --output artifacts/sft.jsonl
 
-      - name: Train original CrazeAI transformer with JAX
+      - name: Train CrazeAI with JAX
         run: |
           python training_jax/train.py \
             --data artifacts/sft.jsonl \
             --output artifacts/crazeai-jax \
             --epochs "${{ inputs.epochs || '1' }}" \
-            --seq-len "${{ inputs.seq_len || '512' }}" \
-            --batch-size "${{ inputs.batch_size || '16' }}"
+            --seq-len "${{ inputs.seq_len || '256' }}" \
+            --batch-size "${{ inputs.batch_size || '8' }}"
 
-      - name: Export JAX weights to Hugging Face format
+      - name: Export Hugging Face checkpoint
         run: |
           python training_jax/export_hf.py \
             --checkpoint artifacts/crazeai-jax \
             --output artifacts/crazeai-135m
 
-      - name: Build llama.cpp converter and quantizer
+      - name: Build llama.cpp
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
           cmake -S llama.cpp -B llama.cpp/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF
-          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
+          cmake --build llama.cpp/build --config Release \
+            -j"$(nproc)" \
+            --target llama-quantize llama-cli
           pip install -r llama.cpp/requirements.txt
 
-      - name: Convert CrazeAI checkpoint to GGUF F16
+      - name: Convert to GGUF F16
         run: |
           python llama.cpp/convert_hf_to_gguf.py \
             artifacts/crazeai-135m \
             --outfile artifacts/crazeai-135m-f16.gguf \
             --outtype f16
 
-      - name: Quantize CrazeAI to Q4_K_M
+      - name: Quantize Q4_K_M
         run: |
           llama.cpp/build/bin/llama-quantize \
             artifacts/crazeai-135m-f16.gguf \
             artifacts/crazeai-135m-q4_k_m.gguf \
             Q4_K_M
-          if [ -f training_v2/crazeai-system-prompt.txt ]; then cp training_v2/crazeai-system-prompt.txt artifacts/; fi
           ls -lh artifacts/crazeai-135m-q4_k_m.gguf
 
-      - name: Validate GGUF
+      - name: Smoke test GGUF
         run: |
           llama.cpp/build/bin/llama-cli \
             -m artifacts/crazeai-135m-q4_k_m.gguf \
