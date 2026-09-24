@@ -1,0 +1,30 @@
+{
+  "name": "CrazeAI Quality Mix v1",
+  "purpose": "Train a compact general assistant without copying another model's weights or proprietary corpus.",
+  "format": "JSONL chat/instruction records",
+  "mix": {
+    "web_text_educational": 0.28,
+    "books_and_reference": 0.12,
+    "science_math_reasoning": 0.14,
+    "code": 0.18,
+    "instruction_following": 0.14,
+    "conversation_and_writing": 0.08,
+    "multilingual": 0.06
+  },
+  "quality_rules": [
+    "deduplicate exact and near-duplicate samples",
+    "remove boilerplate, navigation and spam",
+    "filter unsafe and low-quality generated text",
+    "prefer factual educational material with clear provenance",
+    "keep code syntactically complete where possible",
+    "balance short and long examples",
+    "include explicit refusal/uncertainty examples",
+    "include tool-use and current-information examples without embedding fake search results"
+  ],
+  "stages": [
+    {"name":"pretraining", "ratio":0.82},
+    {"name":"supervised_instruction", "ratio":0.14},
+    {"name":"reasoning_and_tool_use", "ratio":0.04}
+  ],
+  "note": "Use only datasets whose licenses permit the intended use. This manifest describes the training strategy; it does not redistribute third-party datasets."
+}
