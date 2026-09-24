@@ -14,12 +14,12 @@ HEAD_DIM = HIDDEN_SIZE // NUM_HEADS
 ROPE_THETA = 10000.0
 
 
-def init_model(key: jax.Array):
+def init_model(key: jax.Array, dtype=jnp.bfloat16):
     keys = jax.random.split(key, NUM_LAYERS * 8 + 2)
     i = 0
 
     def normal(k, shape, scale):
-        return jax.random.normal(k, shape, dtype=jnp.float32) * scale
+        return (jax.random.normal(k, shape, dtype=jnp.float32) * scale).astype(dtype)
 
     params = {
         "embed": normal(keys[i], (VOCAB_SIZE, HIDDEN_SIZE), 0.02)
@@ -36,19 +36,21 @@ def init_model(key: jax.Array):
             "gate": normal(keys[i + 4], (HIDDEN_SIZE, INTERMEDIATE_SIZE), 0.02),
             "up": normal(keys[i + 5], (HIDDEN_SIZE, INTERMEDIATE_SIZE), 0.02),
             "down": normal(keys[i + 6], (INTERMEDIATE_SIZE, HIDDEN_SIZE), 0.02),
-            "ln1": jnp.ones((HIDDEN_SIZE,), dtype=jnp.float32),
-            "ln2": jnp.ones((HIDDEN_SIZE,), dtype=jnp.float32),
+            "ln1": jnp.ones((HIDDEN_SIZE,), dtype=dtype),
+            "ln2": jnp.ones((HIDDEN_SIZE,), dtype=dtype),
         }
         layers.append(layer)
         i += 7
     params["layers"] = layers
-    params["norm"] = jnp.ones((HIDDEN_SIZE,), dtype=jnp.float32)
+    params["norm"] = jnp.ones((HIDDEN_SIZE,), dtype=dtype)
     params["lm_head"] = normal(keys[i], (HIDDEN_SIZE, VOCAB_SIZE), 0.02)
     return params
 
 
 def rms_norm(x, weight, eps=1e-5):
-    return x * jax.lax.rsqrt(jnp.mean(x * x, axis=-1, keepdims=True) + eps) * weight
+    # Keep the reduction in fp32 for stability, then return the model dtype.
+    variance = jnp.mean(x.astype(jnp.float32) * x.astype(jnp.float32), axis=-1, keepdims=True)
+    return (x * jax.lax.rsqrt(variance + eps) * weight).astype(x.dtype)
 
 
 def rope(x, positions):
@@ -59,28 +61,28 @@ def rope(x, positions):
     cos = jnp.cos(angles)
     sin = jnp.sin(angles)
     x1, x2 = x[..., :half], x[..., half:]
-    return jnp.concatenate([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
+    return jnp.concatenate([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1).astype(x.dtype)
 
 
 def causal_attention(x, layer, positions):
     b, s, _ = x.shape
-    q = x @ layer["q"]
-    k = x @ layer["k"]
-    v = x @ layer["v"]
-    q = q.reshape(b, s, NUM_HEADS, HEAD_DIM)
-    k = k.reshape(b, s, NUM_HEADS, HEAD_DIM)
-    v = v.reshape(b, s, NUM_HEADS, HEAD_DIM)
+    q = (x @ layer["q"]).reshape(b, s, NUM_HEADS, HEAD_DIM)
+    k = (x @ layer["k"]).reshape(b, s, NUM_HEADS, HEAD_DIM)
+    v = (x @ layer["v"]).reshape(b, s, NUM_HEADS, HEAD_DIM)
+
     q = rope(q, positions)
     k = rope(k, positions)
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
-    scores = jnp.einsum("bhqd,bhkd->bhqk", q, k) / math.sqrt(HEAD_DIM)
-    mask = jnp.tril(jnp.ones((s, s), dtype=bool))[None, None, :, :]
-    scores = jnp.where(mask, scores, jnp.finfo(scores.dtype).min)
-    probs = jax.nn.softmax(scores, axis=-1)
-    out = jnp.einsum("bhqk,bhkd->bhqd", probs, v)
-    out = jnp.transpose(out, (0, 2, 1, 3)).reshape(b, s, HIDDEN_SIZE)
+
+    # Let JAX/XLA select an optimized GPU attention implementation instead of
+    # explicitly materializing the full [B,H,S,S] score/probability tensors.
+    out = jax.nn.dot_product_attention(
+        q,
+        k,
+        v,
+        is_causal=True,
+        scale=1.0 / math.sqrt(HEAD_DIM),
+    )
+    out = out.reshape(b, s, HIDDEN_SIZE)
     return out @ layer["o"]
 
 
@@ -101,6 +103,7 @@ def loss_fn(params, tokens):
     inputs = tokens[:, :-1]
     labels = tokens[:, 1:]
     logits = forward(params, inputs)
-    log_probs = jax.nn.log_softmax(logits, axis=-1)
+    # Compute the loss in fp32 for numerical stability.
+    log_probs = jax.nn.log_softmax(logits.astype(jnp.float32), axis=-1)
     picked = jnp.take_along_axis(log_probs, labels[..., None], axis=-1)[..., 0]
     return -jnp.mean(picked)
