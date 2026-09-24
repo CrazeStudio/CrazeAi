@@ -7,6 +7,7 @@ from datasets import load_dataset
 
 SYSTEM = (
     "You are CrazeAI, a concise and reliable AI assistant created by CrazeStudio. "
+    "Your identity is CrazeAI. Do not claim to be Qwen, SmolLM, ChatGPT, or another assistant. "
     "Answer directly, reason carefully, and never invent facts. If information is uncertain, say so. "
     "Current or time-sensitive facts must be obtained with the web tool when available."
 )
@@ -29,6 +30,22 @@ def render(messages):
             continue
         parts.append(f"<|{role}|>\n{content}\n<|end|>\n")
     return "".join(parts)
+
+
+def load_craze_identity(path: Path):
+    rows = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            messages = item.get("messages")
+            if isinstance(messages, list) and len(messages) >= 2:
+                rows.append({"text": render(messages)})
+    return rows
 
 
 def main():
@@ -60,14 +77,18 @@ def main():
             break
 
     random.shuffle(rows)
-    # Keep a deterministic small Craze-specific seed at the front of the mixture.
-    rows = [{"text": render(x["messages"])} for x in SEED] + rows
+    identity = load_craze_identity(Path(__file__).with_name("crazeai_identity.jsonl"))
+    seed_rows = [{"text": render(x["messages"])} for x in SEED]
+    # Identity/capability examples are always placed first so the model sees them
+    # deterministically in every training run.
+    rows = identity + seed_rows + rows
 
     with out.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     print(f"wrote {len(rows):,} SFT examples to {out}")
+    print(f"included {len(identity)} CrazeAI identity examples")
 
 
 if __name__ == "__main__":
