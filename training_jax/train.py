@@ -139,15 +139,17 @@ def main():
     p.add_argument("--output", default="artifacts/crazeai-jax")
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--max-examples", type=int, default=None)
-    p.add_argument("--seq-len", type=int, default=512)
+    p.add_argument("--seq-len", type=int, default=256)
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--chunk-size", type=int, default=8, help="Training steps compiled into one JAX dispatch")
     args = p.parse_args()
 
     print("JAX devices:", jax.devices())
     backend = jax.default_backend()
-    batch_size = args.batch_size or ({"tpu": 32, "gpu": 16}.get(backend, 4))
-    print(f"Backend={backend} batch_size={batch_size} seq_len={args.seq_len}")
+    default_batch = {"tpu": 32, "gpu": 8}.get(backend, 4)
+    batch_size = args.batch_size or default_batch
+    print(f"Backend={backend} batch_size={batch_size} seq_len={args.seq_len} chunk_size={args.chunk_size}")
 
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
@@ -159,33 +161,70 @@ def main():
     if nseq < batch_size:
         raise RuntimeError("Dataset is too small for the selected batch size")
 
-    params = init_model(jax.random.PRNGKey(42))
+    # BF16 parameters are used on accelerator backends for much faster tensor-core
+    # execution and lower memory use. The loss itself is accumulated in FP32.
+    param_dtype = jnp.bfloat16 if backend in ("gpu", "tpu") else jnp.float32
+    params = init_model(jax.random.PRNGKey(42), dtype=param_dtype)
     tx = optax.adamw(args.lr, b1=0.9, b2=0.95, eps=1e-8, weight_decay=0.1)
     opt_state = tx.init(params)
 
-    @jax.jit
-    def train_step(params, opt_state, tokens):
+    def one_step(carry, tokens):
+        params, opt_state = carry
         loss, grads = jax.value_and_grad(loss_fn)(params, tokens)
         updates, opt_state = tx.update(grads, opt_state, params)
-        return optax.apply_updates(params, updates), opt_state, loss
+        params = optax.apply_updates(params, updates)
+        return (params, opt_state), loss
+
+    # Compile several optimizer steps together. This removes thousands of Python
+    # -> GPU dispatches while keeping the optimizer state exact.
+    @jax.jit
+    def train_chunk(params, opt_state, tokens):
+        (params, opt_state), losses = jax.lax.scan(
+            one_step,
+            (params, opt_state),
+            tokens,
+        )
+        return params, opt_state, losses
+
+    @jax.jit
+    def train_single(params, opt_state, tokens):
+        (params, opt_state), loss = one_step((params, opt_state), tokens)
+        return params, opt_state, loss
 
     steps_per_epoch = nseq // batch_size
     print(f"Packed tokens={meta['tokens']:,} sequences={nseq:,} steps/epoch={steps_per_epoch:,}")
     step = 0
     start = time.time()
+    chunk = max(1, args.chunk_size)
+
     for epoch in range(args.epochs):
         order = np.arange(nseq)
         np.random.default_rng(42 + epoch).shuffle(order)
-        for b in range(steps_per_epoch):
-            idx = order[b * batch_size:(b + 1) * batch_size]
-            offsets = idx * (args.seq_len + 1)
-            batch = np.stack([packed[o:o + args.seq_len + 1] for o in offsets]).astype(np.int32)
-            params, opt_state, loss = train_step(params, opt_state, jnp.asarray(batch))
-            step += 1
-            if step % 25 == 0:
+        b = 0
+        while b < steps_per_epoch:
+            remaining = steps_per_epoch - b
+            take = min(chunk, remaining)
+            idx = order[b * batch_size:(b + take) * batch_size]
+            # Vectorized indexing avoids Python list slicing/stacking for every step.
+            offsets = idx[:, None] * (args.seq_len + 1)
+            positions = np.arange(args.seq_len + 1, dtype=np.int64)[None, :]
+            batch = packed[offsets + positions].astype(np.int32).reshape(take, batch_size, args.seq_len + 1)
+            batch_jax = jnp.asarray(batch)
+
+            if take == chunk:
+                params, opt_state, losses = train_chunk(params, opt_state, batch_jax)
+                last_loss = float(losses[-1])
+            else:
+                for i in range(take):
+                    params, opt_state, last_loss = train_single(params, opt_state, batch_jax[i])
+                    last_loss = float(last_loss)
+
+            step += take
+            b += take
+            if step % 25 < take or step % 25 == 0:
                 elapsed = time.time() - start
-                print(f"step={step} loss={float(loss):.4f} steps/s={step/elapsed:.3f}", flush=True)
-            if step % 500 == 0:
+                print(f"step={step} loss={last_loss:.4f} steps/s={step/elapsed:.3f}", flush=True)
+            if step % 500 < take or step % 500 == 0:
                 save_params(params, out)
 
     save_params(params, out)
