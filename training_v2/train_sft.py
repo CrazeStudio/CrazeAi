@@ -32,8 +32,8 @@ def main():
         grad_accum = args.grad_accum or 4
         dtype = torch.bfloat16
     else:
-        # GitHub-hosted runners do not provide CUDA. Keep a real CPU training
-        # path instead of failing before the model is even loaded.
+        # GitHub-hosted runners do not provide CUDA. Keep the CPU path small
+        # enough to finish instead of spending hours on a full SFT run.
         batch_size = args.batch_size or 1
         grad_accum = args.grad_accum or 16
         dtype = torch.float32
@@ -62,7 +62,9 @@ def main():
         desc="Tokenizing CrazeAI SFT data",
     )
 
-    model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=dtype)
+    # Use the current Transformers argument names that are broadly compatible
+    # with the versions available on GitHub-hosted runners.
+    model = AutoModelForCausalLM.from_pretrained(BASE, dtype=dtype)
     model.config.use_cache = False
     if use_cuda:
         model.gradient_checkpointing_enable()
@@ -77,7 +79,9 @@ def main():
         per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=grad_accum,
         learning_rate=args.lr,
-        warmup_ratio=0.03,
+        # Use warmup_steps rather than warmup_ratio because some runner
+        # environments expose an older TrainingArguments API.
+        warmup_steps=50,
         lr_scheduler_type="cosine",
         weight_decay=0.1,
         max_grad_norm=1.0,
