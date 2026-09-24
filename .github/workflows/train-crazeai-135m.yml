@@ -37,7 +37,6 @@ jobs:
 
   train-and-quantize:
     needs: validate
-    # GitHub-hosted runner: do not require a nonexistent self-hosted GPU runner.
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -56,7 +55,7 @@ jobs:
         run: |
           mkdir -p artifacts
           python training_v2/prepare_sft.py \
-            --max-examples "${{ inputs.max_examples || '150000' }}" \
+            --max-examples "${{ inputs.max_examples || '10000' }}" \
             --output artifacts/sft.jsonl
 
       - name: Fine-tune 135M base model
@@ -64,7 +63,7 @@ jobs:
           python training_v2/train_sft.py \
             --data artifacts/sft.jsonl \
             --output artifacts/crazeai-135m \
-            --epochs "${{ inputs.epochs || '2' }}"
+            --epochs "${{ inputs.epochs || '1' }}"
 
       - name: Evaluate CrazeAI
         run: |
