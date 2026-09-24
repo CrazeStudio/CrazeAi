@@ -1,40 +1,70 @@
 # CrazeAI
 
-CrazeAI is a lightweight Android AI project. The repository now contains two generations:
+CrazeAI is a compact AI assistant project focused on **useful intelligence at small model size** and eventual local Android inference.
 
-- **Legacy reference runtime:** the original small custom Transformer + `.craze` format in the root and `android/`.
-- **CrazeAI 135M pipeline:** the recommended production direction in `training_v2/`, using a 135M Llama-compatible base, supervised fine-tuning, evaluation and GGUF Q4 export for llama.cpp.
-
-## Recommended model pipeline
-
-`HuggingFaceTB/SmolLM2-135M` → curated SFT mixture → CrazeAI behavior tuning → evaluation → GGUF F16 → `Q4_K_M` → Android/llama.cpp.
-
-The 135M base is Apache-2.0 and is substantially smaller than the old Qwen3-1.7B experiment. CrazeAI does **not** claim the Qwen weights as its own. The resulting CrazeAI checkpoint is a fine-tuned 135M model with Craze-specific data, behavior and evaluation.
-
-The compact `HuggingFaceTB/smol-smoltalk` dataset is used because it was specifically prepared for models below 1B parameters and contains roughly 460k training examples. It covers instruction following, rewriting, summarization, reasoning and other assistant behaviors. The training pipeline also adds Craze-specific coding, accuracy and assistant-behavior examples.
-
-### Run the model pipeline
-
-Use `.github/workflows/train-crazeai-135m.yml` from GitHub Actions. It performs syntax validation, downloads/prepares the SFT data, fine-tunes the 135M base, evaluates the result, converts it to GGUF and quantizes it to `Q4_K_M`.
-
-Full training requires a CUDA GPU runner labelled `self-hosted`, `linux`, `x64`, `gpu`. A normal GitHub-hosted CPU runner is deliberately not used for the full training job because that would be impractically slow.
-
-### Output
-
-The workflow produces:
+## Repository structure
 
 ```text
-crazeai-135m-q4_k_m.gguf
-evaluation.json
-crazeai-system-prompt.txt
+CrazeAi/
+├── training_v2/          # Current model training pipeline
+│   ├── prepare_sft.py    # Dataset preparation + CrazeAI behavior/identity
+│   ├── train_sft.py      # Supervised fine-tuning
+│   ├── evaluate.py       # Model evaluation
+│   ├── crazeai_identity.jsonl
+│   └── crazeai-system-prompt.txt
+├── android/              # Android + native llama.cpp runtime
+├── backend/              # Optional server/tool layer
+├── .github/workflows/    # Automated training/quantization workflow
+├── data/                 # Reserved for active project data
+├── legacy/               # Old experimental model/training code
+└── README.md
 ```
 
-The Q4 GGUF is the model artifact intended for the Android llama.cpp runtime. It is expected to be around the ~100 MB class rather than the old ~1 GB model.
+The old root-level experimental Python files have been moved into `legacy/` so they cannot be confused with the current pipeline.
 
-## Web search and reasoning
+## Model direction
 
-Fresh information should be supplied by the application tool layer rather than memorized into a tiny local model. The Android assistant can route current/time-sensitive questions to web search, feed the retrieved evidence to CrazeAI, and ask the model to synthesize an answer with sources. Simple questions should stay local for speed.
+`HuggingFaceTB/SmolLM2-135M` → high-quality SFT mixture → CrazeAI behavior/identity tuning → evaluation → GGUF → Q4_K_M → Android/llama.cpp.
 
-## Legacy files
+The base model is used as a starting point; CrazeAI is the resulting fine-tuned model with Craze-specific training, behavior and evaluation. CrazeAI must not claim to be Qwen, SmolLM, ChatGPT, or another assistant.
 
-The original root files (`model.py`, `train.py`, `export.py`, etc.) are retained for compatibility and historical reference. The new GGUF pipeline lives under `training_v2/` and is the recommended path for new model releases.
+## What CrazeAI is being taught
+
+The training mixture emphasizes:
+
+- instruction following
+- coding and debugging
+- explanations
+- reasoning and problem solving
+- concise normal conversation
+- accuracy and uncertainty handling
+- current-information/tool awareness
+- CrazeAI's own identity and model lineage
+
+For example, CrazeAI is explicitly trained to answer **"Who are you?"** with its own identity rather than the identity of its base model.
+
+## Training
+
+The main workflow is:
+
+```text
+prepare SFT data
+      ↓
+135M supervised fine-tuning
+      ↓
+evaluation
+      ↓
+GGUF export
+      ↓
+Q4_K_M quantization
+      ↓
+Android llama.cpp runtime
+```
+
+Use `.github/workflows/train-crazeai-135m.yml` for the automated pipeline. The workflow should run on an appropriate GPU runner for practical full training; CPU fallback exists for compatibility but is substantially slower.
+
+## Runtime/tool layer
+
+The small local model should not be forced to memorize everything. The Android/tool layer can route current or external-information questions to web search, provide evidence to CrazeAI, and let the model synthesize the final answer.
+
+Simple prompts such as `hello` should remain fast and should not trigger unnecessary deep reasoning or web search.
