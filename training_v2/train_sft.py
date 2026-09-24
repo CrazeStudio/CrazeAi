@@ -20,14 +20,25 @@ def main():
     p.add_argument("--data", default="artifacts/sft.jsonl")
     p.add_argument("--output", default="artifacts/crazeai-135m")
     p.add_argument("--epochs", type=float, default=2.0)
-    p.add_argument("--max-length", type=int, default=2048)
-    p.add_argument("--batch-size", type=int, default=8)
-    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--max-length", type=int, default=1024)
+    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--grad-accum", type=int, default=None)
     p.add_argument("--lr", type=float, default=2e-5)
     args = p.parse_args()
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("Full CrazeAI SFT requires a CUDA GPU runner. Use the smoke workflow on CPU.")
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        batch_size = args.batch_size or 8
+        grad_accum = args.grad_accum or 4
+        dtype = torch.bfloat16
+    else:
+        # GitHub-hosted runners do not provide CUDA. Keep a real CPU training
+        # path instead of failing before the model is even loaded.
+        batch_size = args.batch_size or 1
+        grad_accum = args.grad_accum or 16
+        dtype = torch.float32
+        torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
+        print("CUDA unavailable: using CPU SFT fallback")
 
     tokenizer = AutoTokenizer.from_pretrained(BASE, use_fast=True)
     if tokenizer.pad_token is None:
@@ -51,19 +62,20 @@ def main():
         desc="Tokenizing CrazeAI SFT data",
     )
 
-    model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=torch.bfloat16)
+    model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=dtype)
     model.config.use_cache = False
-    model.gradient_checkpointing_enable()
+    if use_cuda:
+        model.gradient_checkpointing_enable()
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    bf16 = torch.cuda.is_bf16_supported()
+    bf16 = use_cuda and torch.cuda.is_bf16_supported()
 
     training = TrainingArguments(
         output_dir=args.output,
         num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        gradient_accumulation_steps=grad_accum,
         learning_rate=args.lr,
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
@@ -76,12 +88,12 @@ def main():
         save_steps=500,
         save_total_limit=2,
         bf16=bf16,
-        fp16=not bf16,
-        tf32=True,
-        gradient_checkpointing=True,
+        fp16=use_cuda and not bf16,
+        tf32=use_cuda,
+        gradient_checkpointing=use_cuda,
         report_to="none",
         remove_unused_columns=False,
-        dataloader_num_workers=2,
+        dataloader_num_workers=0 if not use_cuda else 2,
     )
 
     trainer = Trainer(
