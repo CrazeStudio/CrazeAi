@@ -1,0 +1,110 @@
+name: Train CrazeAI 135M -> GGUF Q4
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_examples:
+        description: "Maximum SFT examples"
+        required: false
+        default: "150000"
+      epochs:
+        description: "SFT epochs"
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m compileall training_v2
+
+  train-and-quantize:
+    needs: validate
+    # Full SFT is intentionally NOT run on a normal GitHub-hosted CPU runner.
+    # Attach a CUDA runner with labels: self-hosted, linux, x64, gpu.
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 1440
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check CUDA
+        run: |
+          nvidia-smi
+          python - <<'PY'
+          import torch
+          assert torch.cuda.is_available(), "CUDA is required for full training"
+          print("CUDA:", torch.version.cuda)
+          print("GPU:", torch.cuda.get_device_name(0))
+          PY
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r training_v2/requirements.txt
+
+      - name: Prepare high-quality SFT mixture
+        run: |
+          python training_v2/prepare_sft.py \
+            --max-examples "${{ inputs.max_examples }}" \
+            --output artifacts/sft.jsonl
+
+      - name: Fine-tune 135M base model
+        run: |
+          python training_v2/train_sft.py \
+            --data artifacts/sft.jsonl \
+            --output artifacts/crazeai-135m \
+            --epochs "${{ inputs.epochs }}"
+
+      - name: Evaluate CrazeAI
+        run: |
+          python training_v2/evaluate.py \
+            --model artifacts/crazeai-135m \
+            --data artifacts/sft.jsonl \
+            --output artifacts/evaluation.json
+
+      - name: Build llama.cpp converter and quantizer
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
+          cmake -S llama.cpp -B llama.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF
+          cmake --build llama.cpp/build --config Release -j2 --target llama-quantize
+          pip install -r llama.cpp/requirements.txt
+
+      - name: Convert CrazeAI checkpoint to GGUF F16
+        run: |
+          python llama.cpp/convert_hf_to_gguf.py \
+            artifacts/crazeai-135m \
+            --outfile artifacts/crazeai-135m-f16.gguf \
+            --outtype f16
+
+      - name: Quantize CrazeAI to Q4_K_M
+        run: |
+          llama.cpp/build/bin/llama-quantize \
+            artifacts/crazeai-135m-f16.gguf \
+            artifacts/crazeai-135m-q4_k_m.gguf \
+            Q4_K_M
+          cp training_v2/crazeai-system-prompt.txt artifacts/
+          ls -lh artifacts/crazeai-135m-q4_k_m.gguf artifacts/evaluation.json
+
+      - name: Upload CrazeAI release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: crazeai-135m-q4-k-m
+          path: |
+            artifacts/crazeai-135m-q4_k_m.gguf
+            artifacts/evaluation.json
+            artifacts/crazeai-system-prompt.txt
+          retention-days: 30
