@@ -1,13 +1,6 @@
 name: Build CrazeAI JAX 135M -> GGUF Q4
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "training_jax/**"
-      - "training_v2/prepare_sft.py"
-      - "training_v2/crazeai_identity.jsonl"
-      - ".github/workflows/train-crazeai-135m.yml"
   workflow_dispatch:
     inputs:
       max_examples:
@@ -22,13 +15,18 @@ on:
         description: "Packed sequence length"
         required: false
         default: "512"
+      batch_size:
+        description: "JAX batch size"
+        required: false
+        default: "16"
 
 permissions:
   contents: read
 
+# Never cancel an active long training run because another run was started.
 concurrency:
   group: crazeai-training
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -61,6 +59,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r training_jax/requirements.txt
 
+      - name: Show compute backend
+        run: |
+          python - <<'PY'
+          import jax
+          print("JAX version:", jax.__version__)
+          print("JAX backend:", jax.default_backend())
+          print("JAX devices:", jax.devices())
+          if jax.default_backend() == "cpu":
+              print("WARNING: GitHub-hosted runner has no accelerator; training will be CPU-only.")
+          PY
+
       - name: Prepare high-quality SFT mixture
         run: |
           mkdir -p artifacts
@@ -74,7 +83,8 @@ jobs:
             --data artifacts/sft.jsonl \
             --output artifacts/crazeai-jax \
             --epochs "${{ inputs.epochs || '1' }}" \
-            --seq-len "${{ inputs.seq_len || '512' }}"
+            --seq-len "${{ inputs.seq_len || '512' }}" \
+            --batch-size "${{ inputs.batch_size || '16' }}"
 
       - name: Export JAX weights to Hugging Face format
         run: |
@@ -104,7 +114,7 @@ jobs:
             artifacts/crazeai-135m-f16.gguf \
             artifacts/crazeai-135m-q4_k_m.gguf \
             Q4_K_M
-          cp training_v2/crazeai-system-prompt.txt artifacts/
+          if [ -f training_v2/crazeai-system-prompt.txt ]; then cp training_v2/crazeai-system-prompt.txt artifacts/; fi
           ls -lh artifacts/crazeai-135m-q4_k_m.gguf
 
       - name: Validate GGUF
