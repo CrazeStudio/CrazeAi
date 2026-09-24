@@ -1,0 +1,8 @@
+torch>=2.4
+transformers>=4.45
+accelerate>=0.34
+datasets>=3.0
+sentencepiece>=0.2
+tokenizers>=0.20
+safetensors>=0.4
+huggingface_hub>=0.24
