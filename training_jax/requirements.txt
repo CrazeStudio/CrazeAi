@@ -4,3 +4,4 @@ numpy>=1.26
 safetensors>=0.5
 tokenizers>=0.21
 huggingface_hub>=0.30
+datasets>=3.0
