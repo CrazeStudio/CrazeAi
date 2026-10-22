@@ -140,8 +140,15 @@ jobs:
             try:
                 backend = getattr(tokenizer, "backend_tokenizer", None)
                 tokenizer_json = json.loads(backend.to_str()) if backend is not None else {}
-                pre_tokenizer = tokenizer_json.get("pre_tokenizer", {})
-                if isinstance(pre_tokenizer, dict) and pre_tokenizer.get("type") == "ByteLevel":
+                def contains_bytelevel(node):
+                    if isinstance(node, dict):
+                        if node.get("type") == "ByteLevel":
+                            return True
+                        return any(contains_bytelevel(value) for value in node.values())
+                    if isinstance(node, list):
+                        return any(contains_bytelevel(value) for value in node)
+                    return False
+                if contains_bytelevel(tokenizer_json.get("pre_tokenizer", {})):
                     res = "gpt-2"
                     logger.warning("Using GPT-2 ByteLevel pre-tokenizer compatibility for CrazeAI custom BPE tokenizer")
             except Exception as exc:
