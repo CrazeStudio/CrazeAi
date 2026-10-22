@@ -137,15 +137,15 @@ jobs:
           source = path.read_text(encoding="utf-8")
           marker = '        if res is None:\n            logger.warning("\\n")'
           fallback = '''        if res is None:
-                  try:
-                      backend = getattr(tokenizer, "backend_tokenizer", None)
-                      tokenizer_json = json.loads(backend.to_str()) if backend is not None else {}
-                      pre_tokenizer = tokenizer_json.get("pre_tokenizer", {})
-                      if isinstance(pre_tokenizer, dict) and pre_tokenizer.get("type") == "ByteLevel":
-                          res = "gpt-2"
-                          logger.warning("Using GPT-2 ByteLevel pre-tokenizer compatibility for CrazeAI custom BPE tokenizer")
-                  except Exception as exc:
-                      logger.debug("Could not inspect custom tokenizer pre-tokenizer: %s", exc)
+            try:
+                backend = getattr(tokenizer, "backend_tokenizer", None)
+                tokenizer_json = json.loads(backend.to_str()) if backend is not None else {}
+                pre_tokenizer = tokenizer_json.get("pre_tokenizer", {})
+                if isinstance(pre_tokenizer, dict) and pre_tokenizer.get("type") == "ByteLevel":
+                    res = "gpt-2"
+                    logger.warning("Using GPT-2 ByteLevel pre-tokenizer compatibility for CrazeAI custom BPE tokenizer")
+            except Exception as exc:
+                logger.debug("Could not inspect custom tokenizer pre-tokenizer: %s", exc)
           '''
           if marker not in source:
               raise SystemExit("Could not locate llama.cpp tokenizer fallback marker; refusing to patch an unknown converter version")
