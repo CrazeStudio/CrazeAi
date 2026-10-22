@@ -126,6 +126,34 @@ jobs:
       - name: Build llama.cpp tools
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+
+          # CrazeAI uses a custom ByteLevel BPE tokenizer. llama.cpp's converter
+          # only recognizes a fixed list of known tokenizer hashes, so explicitly
+          # map this compatible ByteLevel tokenizer to the GPT-2 pre-tokenizer.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("llama.cpp/conversion/base.py")
+          source = path.read_text(encoding="utf-8")
+          marker = '        if res is None:\n            logger.warning("\\n")'
+          fallback = '''        if res is None:
+                  try:
+                      backend = getattr(tokenizer, "backend_tokenizer", None)
+                      tokenizer_json = json.loads(backend.to_str()) if backend is not None else {}
+                      pre_tokenizer = tokenizer_json.get("pre_tokenizer", {})
+                      if isinstance(pre_tokenizer, dict) and pre_tokenizer.get("type") == "ByteLevel":
+                          res = "gpt-2"
+                          logger.warning("Using GPT-2 ByteLevel pre-tokenizer compatibility for CrazeAI custom BPE tokenizer")
+                  except Exception as exc:
+                      logger.debug("Could not inspect custom tokenizer pre-tokenizer: %s", exc)
+          '''
+          if marker not in source:
+              raise SystemExit("Could not locate llama.cpp tokenizer fallback marker; refusing to patch an unknown converter version")
+          if "Using GPT-2 ByteLevel pre-tokenizer compatibility for CrazeAI custom BPE tokenizer" not in source:
+              path.write_text(source.replace(marker, fallback + marker, 1), encoding="utf-8")
+          print("Patched llama.cpp custom ByteLevel BPE tokenizer compatibility")
+          PY
+
           cmake -S llama.cpp -B llama.cpp/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF
