@@ -59,7 +59,10 @@ def main():
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    ds = load_dataset("HuggingFaceTB/smol-smoltalk", split="train")
+    ds = load_dataset("HuggingFaceTB/smol-smoltalk", split="train", streaming=True)
+    # Streaming avoids downloading the entire corpus when this run needs only a small sample.
+    if hasattr(ds, "shuffle"):
+        ds = ds.shuffle(seed=args.seed, buffer_size=max(1000, min(10000, args.max_examples)))
     rows = []
     for item in ds:
         messages = item.get("messages")
@@ -76,6 +79,8 @@ def main():
         if len(rows) >= args.max_examples:
             break
 
+    if not rows:
+        raise RuntimeError("Dataset preparation produced zero valid examples; check the dataset source/schema and network access.")
     random.shuffle(rows)
     identity = load_craze_identity(Path(__file__).with_name("crazeai_identity.jsonl"))
     seed_rows = [{"text": render(x["messages"])} for x in SEED]
