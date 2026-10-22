@@ -36,7 +36,7 @@ def read_texts(path, limit=None):
 def write_tokenizer_metadata(out_path):
     root = out_path.parent
     (root / "tokenizer_config.json").write_text(json.dumps({
-        "tokenizer_class": "LlamaTokenizerFast",
+        "tokenizer_class": "GPT2TokenizerFast",
         "bos_token": "<bos>",
         "eos_token": "<eos>",
         "unk_token": "<unk>",
