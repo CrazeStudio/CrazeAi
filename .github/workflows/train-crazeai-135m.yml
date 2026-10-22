@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       max_examples:
-        description: "Maximum SFT examples (higher values need more CPU time)"
+        description: "CPU-friendly starting size; increase for longer training runs"
         type: number
         required: false
-        default: 15000
+        default: 1000
       epochs:
         description: "Training epochs"
         type: number
@@ -90,7 +90,7 @@ jobs:
         run: |
           mkdir -p artifacts
           python training_v2/prepare_sft.py \
-            --max-examples "${{ inputs.max_examples || 15000 }}" \
+            --max-examples "${{ inputs.max_examples || 1000 }}" \
             --output artifacts/sft.jsonl
           test -s artifacts/sft.jsonl
           wc -l artifacts/sft.jsonl
@@ -103,7 +103,7 @@ jobs:
             --epochs "${{ inputs.epochs || 1 }}" \
             --seq-len "${{ inputs.seq_len || 128 }}" \
             --batch-size "${{ inputs.batch_size || 1 }}" \
-            --max-examples "${{ inputs.max_examples || 15000 }}" \
+            --max-examples "${{ inputs.max_examples || 1000 }}" \
             --chunk-size "${{ inputs.chunk_size || 1 }}"
 
       - name: Export and validate Hugging Face checkpoint
