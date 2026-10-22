@@ -1,4 +1,4 @@
-name: Build CrazeAI 135M -> GGUF Q4 (100 MiB target)
+name: Build CrazeAI 135M -> GGUF Q4 (100 MB target)
 
 on:
   workflow_dispatch:
@@ -28,8 +28,8 @@ on:
         type: number
         required: false
         default: 1
-      max_model_size_mib:
-        description: "Fail if the final GGUF exceeds this size in MiB"
+      max_model_size_mb:
+        description: "Fail if the final GGUF exceeds this size in decimal MB"
         type: number
         required: false
         default: 100
@@ -146,8 +146,8 @@ jobs:
 
           size_bytes="$(stat -c '%s' "$model")"
           limit_bytes="$(( ${{ inputs.max_model_size_mib || 100 }} * 1024 * 1024 ))"
-          size_mib="$(awk -v b="$size_bytes" 'BEGIN { printf "%.2f", b / 1048576 }')"
-          echo "Final GGUF size: ${size_mib} MiB (${size_bytes} bytes)"
+          size_mb="$(awk -v b="$size_bytes" 'BEGIN { printf "%.2f", b / 1000000 }')"
+          echo "Final GGUF size: ${size_mb} MB (${size_bytes} bytes)"
           echo "Configured limit: ${{ inputs.max_model_size_mib || 100 }} MiB"
           if (( size_bytes > limit_bytes )); then
             echo "::error::Quantized GGUF exceeds the configured size limit."
@@ -167,7 +167,7 @@ jobs:
       - name: Upload compact CrazeAI GGUF
         uses: actions/upload-artifact@v4
         with:
-          name: crazeai-135m-q4-k-m-under-100-mib
+          name: crazeai-135m-q4-k-m-under-100-mb
           path: |
             artifacts/crazeai-135m-q4_k_m.gguf
             artifacts/smoke-test.txt
