@@ -130,11 +130,18 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF
           cmake --build llama.cpp/build --config Release -j2 --target llama-quantize llama-cli
-          python -m pip install -r llama.cpp/requirements.txt
+
+          # Keep converter dependencies separate from JAX/dataset dependencies.
+          # llama.cpp's current converter expects transformers with Hub < 1.0.
+          python -m venv /tmp/crazeai-gguf-env
+          /tmp/crazeai-gguf-env/bin/python -m pip install --upgrade pip
+          /tmp/crazeai-gguf-env/bin/python -m pip install -r llama.cpp/requirements.txt
+          /tmp/crazeai-gguf-env/bin/python -m pip install "huggingface-hub>=0.34,<1.0"
+          /tmp/crazeai-gguf-env/bin/python -c "import transformers, huggingface_hub; print('Transformers:', transformers.__version__); print('Hub:', huggingface_hub.__version__); assert int(huggingface_hub.__version__.split('.')[0]) == 0"
 
       - name: Convert to F16 GGUF and quantize
         run: |
-          python llama.cpp/convert_hf_to_gguf.py \
+          /tmp/crazeai-gguf-env/bin/python llama.cpp/convert_hf_to_gguf.py \
             artifacts/crazeai-1m \
             --outfile artifacts/crazeai-1m-f16.gguf \
             --outtype f16
