@@ -118,7 +118,7 @@ jobs:
         run: |
           python training_jax_1m/export_hf.py \
             --checkpoint artifacts/crazeai-10m-jax \
-            --output artifacts/crazeai-1m
+            --output artifacts/crazeai-10m
           test -s artifacts/crazeai-10m/model.safetensors
           test -s artifacts/crazeai-10m/config.json
           test -s artifacts/crazeai-10m/tokenizer.json
@@ -179,7 +179,7 @@ jobs:
       - name: Convert to F16 GGUF and quantize
         run: |
           /tmp/crazeai-gguf-env/bin/python llama.cpp/convert_hf_to_gguf.py \
-            artifacts/crazeai-1m \
+            artifacts/crazeai-10m \
             --outfile artifacts/crazeai-10m-f16.gguf \
             --outtype f16
           test -s artifacts/crazeai-10m-f16.gguf
@@ -199,21 +199,15 @@ jobs:
 
       - name: Smoke test chat-formatted GGUF
         run: |
-          PROMPT=
-      - name: Upload model and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: crazeai-10m-20k-q4-k-m
-          path: |
-            artifacts/crazeai-10m-q4_k_m.gguf
-            artifacts/crazeai-10m/config.json
-            artifacts/crazeai-10m/model.safetensors
-            artifacts/crazeai-10m/tokenizer.json
-            artifacts/smoke-test.txt
-          if-no-files-found: warn
-          retention-days: 14
-<|system|>\nYou are CrazeAI, an AI assistant created by CrazeStudio. Answer clearly and directly.<|end|>\n<|user|>\nHello. Who are you?<|end|>\n<|assistant|>\n'
+          printf '%s\n' \
+            '<|system|>' \
+            'You are CrazeAI, an AI assistant created by CrazeStudio. Answer clearly and directly.' \
+            '<|end|>' \
+            '<|user|>' \
+            'Hello. Who are you?' \
+            '<|end|>' \
+            '<|assistant|>' > artifacts/smoke-prompt.txt
+          PROMPT="$(cat artifacts/smoke-prompt.txt)"
           llama.cpp/build/bin/llama-cli \
             -m artifacts/crazeai-10m-q4_k_m.gguf \
             -p "$PROMPT" \
@@ -221,7 +215,7 @@ jobs:
             --temp 0.2 \
             --no-display-prompt | tee artifacts/smoke-test.txt
           test -s artifacts/smoke-test.txt
-          if grep -Eq '<\|user\|>|<\|system\|>' artifacts/smoke-test.txt; then
+          if grep -Fq '<|user|>' artifacts/smoke-test.txt || grep -Fq '<|system|>' artifacts/smoke-test.txt; then
             echo "Model leaked conversation control tokens into its answer"
             exit 1
           fi
@@ -236,6 +230,7 @@ jobs:
             artifacts/crazeai-10m/config.json
             artifacts/crazeai-10m/model.safetensors
             artifacts/crazeai-10m/tokenizer.json
+            artifacts/smoke-prompt.txt
             artifacts/smoke-test.txt
           if-no-files-found: warn
           retention-days: 14
