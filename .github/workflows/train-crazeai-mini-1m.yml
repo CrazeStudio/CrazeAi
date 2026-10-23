@@ -1,4 +1,4 @@
-name: Train CrazeAI Mini 1M -> GGUF Q4
+name: Train CrazeAI 10M · 20K examples -> GGUF Q4
 
 on:
   push:
@@ -12,12 +12,12 @@ on:
       max_examples:
         description: "Maximum SmolTalk examples (plus CrazeAI seed examples)"
         required: false
-        default: "10000"
+        default: "20000"
         type: string
       epochs:
         description: "Training epochs"
         required: false
-        default: "1"
+        default: "2"
         type: string
       seq_len:
         description: "Sequence length"
@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: crazeai-mini-1m-${{ github.ref }}
+  group: crazeai-10m-20k-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -86,7 +86,7 @@ jobs:
 
       - name: Prepare bounded streaming dataset
         env:
-          MAX_EXAMPLES: ${{ inputs.max_examples || '10000' }}
+          MAX_EXAMPLES: ${{ inputs.max_examples || '20000' }}
         run: |
           mkdir -p artifacts
           python training_v2/prepare_sft.py \
@@ -101,27 +101,27 @@ jobs:
           SEQ_LEN: ${{ inputs.seq_len || '128' }}
           BATCH_SIZE: ${{ inputs.batch_size || '8' }}
           CHUNK_SIZE: ${{ inputs.chunk_size || '8' }}
-          MAX_EXAMPLES: ${{ inputs.max_examples || '10000' }}
+          MAX_EXAMPLES: ${{ inputs.max_examples || '20000' }}
         run: |
           python training_jax_1m/train.py \
             --data artifacts/sft.jsonl \
-            --output artifacts/crazeai-1m-jax \
+            --output artifacts/crazeai-10m-jax \
             --epochs "$EPOCHS" \
             --seq-len "$SEQ_LEN" \
             --batch-size "$BATCH_SIZE" \
             --max-examples "$MAX_EXAMPLES" \
             --chunk-size "$CHUNK_SIZE"
-          test -s artifacts/crazeai-1m-jax/params.npz
-          test -s artifacts/crazeai-1m-jax/tokenizer.json
+          test -s artifacts/crazeai-10m-jax/params.npz
+          test -s artifacts/crazeai-10m-jax/tokenizer.json
 
       - name: Export and validate Hugging Face checkpoint
         run: |
           python training_jax_1m/export_hf.py \
-            --checkpoint artifacts/crazeai-1m-jax \
-            --output artifacts/crazeai-1m
-          test -s artifacts/crazeai-1m/model.safetensors
-          test -s artifacts/crazeai-1m/config.json
-          test -s artifacts/crazeai-1m/tokenizer.json
+            --checkpoint artifacts/crazeai-10m-jax \
+            --output artifacts/crazeai-10m
+          test -s artifacts/crazeai-10m/model.safetensors
+          test -s artifacts/crazeai-10m/config.json
+          test -s artifacts/crazeai-10m/tokenizer.json
 
       - name: Build llama.cpp tools
         run: |
@@ -179,44 +179,82 @@ jobs:
       - name: Convert to F16 GGUF and quantize
         run: |
           /tmp/crazeai-gguf-env/bin/python llama.cpp/convert_hf_to_gguf.py \
-            artifacts/crazeai-1m \
-            --outfile artifacts/crazeai-1m-f16.gguf \
+            artifacts/crazeai-10m \
+            --outfile artifacts/crazeai-10m-f16.gguf \
             --outtype f16
-          test -s artifacts/crazeai-1m-f16.gguf
+          test -s artifacts/crazeai-10m-f16.gguf
           llama.cpp/build/bin/llama-quantize \
-            artifacts/crazeai-1m-f16.gguf \
-            artifacts/crazeai-1m-q4_k_m.gguf \
+            artifacts/crazeai-10m-f16.gguf \
+            artifacts/crazeai-10m-q4_k_m.gguf \
             Q4_K_M
-          test -s artifacts/crazeai-1m-q4_k_m.gguf
+          test -s artifacts/crazeai-10m-q4_k_m.gguf
           python - <<'PY'
           from pathlib import Path
-          p = Path("artifacts/crazeai-1m-q4_k_m.gguf")
+          p = Path("artifacts/crazeai-10m-q4_k_m.gguf")
           size = p.stat().st_size
           print(f"GGUF size: {size:,} bytes ({size / 1_000_000:.2f} MB)")
           if size > 100_000_000:
               raise SystemExit("GGUF exceeds the strict 100 MB limit")
           PY
 
-      - name: Smoke test generated GGUF
+      - name: Smoke test chat-formatted GGUF
         run: |
+          printf '%s\n' \
+            '<|system|>' \
+            'You are CrazeAI, an AI assistant created by CrazeStudio. Answer clearly and directly.' \
+            '<|end|>' \
+            '<|user|>' \
+            'Hello. Who are you?' \
+            '<|end|>' \
+            '<|assistant|>' > artifacts/smoke-prompt.txt
+          PROMPT="$(cat artifacts/smoke-prompt.txt)"
           llama.cpp/build/bin/llama-cli \
-            -m artifacts/crazeai-1m-q4_k_m.gguf \
-            -p "Who are you?" \
-            -n 32 \
+            -m artifacts/crazeai-10m-q4_k_m.gguf \
+            -p "$PROMPT" \
+            -n 80 \
             --temp 0.2 \
             --no-display-prompt | tee artifacts/smoke-test.txt
           test -s artifacts/smoke-test.txt
+          if grep -Fq '<|user|>' artifacts/smoke-test.txt || grep -Fq '<|system|>' artifacts/smoke-test.txt; then
+            echo "Model leaked conversation control tokens into its answer"
+            exit 1
+          fi
+
+      - name: Check a known answer
+        run: |
+          printf '%s\n' \
+            '<|system|>' \
+            'You are CrazeAI, an AI assistant created by CrazeStudio. Answer clearly and directly.' \
+            '<|end|>' \
+            '<|user|>' \
+            'What is 7 multiplied by 8?' \
+            '<|end|>' \
+            '<|assistant|>' > artifacts/qa-prompt.txt
+          QA_PROMPT="$(cat artifacts/qa-prompt.txt)"
+          llama.cpp/build/bin/llama-cli \
+            -m artifacts/crazeai-10m-q4_k_m.gguf \
+            -p "$QA_PROMPT" \
+            -n 24 \
+            --temp 0 \
+            --no-display-prompt | tee artifacts/qa-test.txt
+          if ! grep -Eq '(^|[^0-9])56([^0-9]|$)' artifacts/qa-test.txt; then
+            echo "Known-answer probe failed: expected the answer 56"
+            exit 1
+          fi
 
       - name: Upload model and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: crazeai-mini-1m-q4-k-m
+          name: crazeai-10m-20k-q4-k-m
           path: |
-            artifacts/crazeai-1m-q4_k_m.gguf
-            artifacts/crazeai-1m/config.json
-            artifacts/crazeai-1m/model.safetensors
-            artifacts/crazeai-1m/tokenizer.json
+            artifacts/crazeai-10m-q4_k_m.gguf
+            artifacts/crazeai-10m/config.json
+            artifacts/crazeai-10m/model.safetensors
+            artifacts/crazeai-10m/tokenizer.json
+            artifacts/smoke-prompt.txt
             artifacts/smoke-test.txt
+            artifacts/qa-prompt.txt
+            artifacts/qa-test.txt
           if-no-files-found: warn
           retention-days: 14
