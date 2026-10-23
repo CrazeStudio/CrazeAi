@@ -220,6 +220,28 @@ jobs:
             exit 1
           fi
 
+      - name: Check a known answer
+        run: |
+          printf '%s\n' \
+            '<|system|>' \
+            'You are CrazeAI, an AI assistant created by CrazeStudio. Answer clearly and directly.' \
+            '<|end|>' \
+            '<|user|>' \
+            'What is 7 multiplied by 8?' \
+            '<|end|>' \
+            '<|assistant|>' > artifacts/qa-prompt.txt
+          QA_PROMPT="$(cat artifacts/qa-prompt.txt)"
+          llama.cpp/build/bin/llama-cli \
+            -m artifacts/crazeai-10m-q4_k_m.gguf \
+            -p "$QA_PROMPT" \
+            -n 24 \
+            --temp 0 \
+            --no-display-prompt | tee artifacts/qa-test.txt
+          if ! grep -Eq '(^|[^0-9])56([^0-9]|$)' artifacts/qa-test.txt; then
+            echo "Known-answer probe failed: expected the answer 56"
+            exit 1
+          fi
+
       - name: Upload model and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,5 +254,7 @@ jobs:
             artifacts/crazeai-10m/tokenizer.json
             artifacts/smoke-prompt.txt
             artifacts/smoke-test.txt
+            artifacts/qa-prompt.txt
+            artifacts/qa-test.txt
           if-no-files-found: warn
           retention-days: 14
