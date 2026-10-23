@@ -99,11 +99,14 @@ def forward(params, tokens):
     return x @ params["lm_head"]
 
 
-def loss_fn(params, tokens):
+def loss_fn(params, tokens, answer_mask):
     inputs = tokens[:, :-1]
     labels = tokens[:, 1:]
+    # Mask is aligned to tokens; only assistant answer text and assistant end
+    # markers contribute to the loss. User/system prompts are context, not targets.
+    weights = answer_mask[:, 1:].astype(jnp.float32)
     logits = forward(params, inputs)
-    # Compute the loss in fp32 for numerical stability.
     log_probs = jax.nn.log_softmax(logits.astype(jnp.float32), axis=-1)
     picked = jnp.take_along_axis(log_probs, labels[..., None], axis=-1)[..., 0]
-    return -jnp.mean(picked)
+    weighted_loss = -picked * weights
+    return jnp.sum(weighted_loss) / jnp.maximum(jnp.sum(weights), 1.0)
