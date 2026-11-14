@@ -42,23 +42,41 @@ To use your own existing database, put it at \`data/database.jsonl\`. The builde
 
 The local file must contain at least enough unique valid records to fill the requested count after the CrazeAI seed records are included.
 
-### 2. Train on a CUDA GPU
+### 2. Train on one CUDA GPU
 
-    python scripts/train.py --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output outputs/crazeai-500m --epochs 2 --max-length 2048 --batch-size 1 --gradient-accumulation 16
+    python -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output outputs/crazeai-500m --epochs 2 --max-length 1024 --batch-size 1 --gradient-accumulation 16
 
-Full fine-tuning is memory-intensive. Use a CUDA GPU with **at least 16 GB VRAM recommended** for the default settings; lower-memory cards may require a smaller sequence length or batch/accumulation changes. CPU training is disabled by default because a 500M full fine-tune on CPU is impractically slow. \`--allow-cpu\` is available only for deliberate experiments.
+### 3. Train on two CUDA GPUs (Kaggle T4 x2)
 
-### 3. Evaluate
+Select **GPU T4 x2** in Kaggle Notebook Settings → Accelerator, restart the session, and verify that PyTorch sees two devices:
+
+    import torch
+    print(torch.cuda.device_count())
+    print([torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
+
+The device count must be `2`. Launch one process per GPU with DDP:
+
+    torchrun --standalone --nproc_per_node=2 -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output /kaggle/working/crazeai-500m-ddp --epochs 2 --max-length 1024 --batch-size 1 --gradient-accumulation 8
+
+The two-GPU command uses rank-zero-only preprocessing to avoid concurrent writes, NCCL for GPU communication, and one Trainer process per GPU. Per-device batch size 1 with accumulation 8 keeps the effective batch size at 16 across two GPUs, matching the one-GPU example above. Each process loads a model replica on its own local GPU. Two GPUs can improve examples/second, but DDP communication overhead means speedup is not guaranteed; compare steady-state throughput after warm-up.
+
+Full fine-tuning is memory-intensive. A 1,024-token context is a practical starting point for T4 GPUs; increase it only after measuring memory and throughput. CPU training is disabled by default because a 500M full fine-tune on CPU is impractically slow. `--allow-cpu` is available only for deliberate experiments.
+
+### 4. TPU note
+
+The current training script targets CUDA and NCCL. It does **not** support TPU execution. TPU training needs a separate PyTorch TPU backend and distributed launch path; do not run this CUDA script unchanged on a TPU.
+
+### 5. Evaluate
 
     python scripts/evaluate.py --model outputs/crazeai-500m --validation data/processed/validation.jsonl --output outputs/crazeai-500m/evaluation.json
 
 Evaluation reports token-weighted validation loss, perplexity, and deterministic chat probes. A successful training run is not a guarantee of a particular benchmark score; inspect the report and sample outputs before release.
 
-### 4. Chat locally
+### 6. Chat locally
 
     python scripts/chat.py --model outputs/crazeai-500m
 
-### 5. Start the API
+### 7. Start the API
 
     export CRAZEAI_MODEL=outputs/crazeai-500m
     export CRAZEAI_API_KEY=replace-with-a-long-random-secret
