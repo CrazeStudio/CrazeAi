@@ -44,7 +44,7 @@ The local file must contain at least enough unique valid records to fill the req
 
 ### 2. Train on one CUDA GPU
 
-    python -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output outputs/crazeai-500m --epochs 2 --max-length 1024 --batch-size 1 --gradient-accumulation 16
+    python -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output outputs/crazeai-500m --epochs 1 --max-length 512 --batch-size 2 --gradient-accumulation 4
 
 ### 3. Train on two CUDA GPUs (Kaggle T4 x2)
 
@@ -56,11 +56,11 @@ Select **GPU T4 x2** in Kaggle Notebook Settings → Accelerator, restart the se
 
 The device count must be `2`. Launch one process per GPU with DDP:
 
-    torchrun --standalone --nproc_per_node=2 -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output /kaggle/working/crazeai-500m-ddp --epochs 2 --max-length 1024 --batch-size 1 --gradient-accumulation 8
+    torchrun --standalone --nproc_per_node=2 -m scripts.train --train data/processed/train.jsonl --validation data/processed/validation.jsonl --output /kaggle/working/crazeai-500m-ddp --epochs 1 --max-steps 1200 --max-length 512 --batch-size 2 --gradient-accumulation 4
 
-The two-GPU command uses rank-zero-only preprocessing to avoid concurrent writes, NCCL for GPU communication, and one Trainer process per GPU. Per-device batch size 1 with accumulation 8 keeps the effective batch size at 16 across two GPUs, matching the one-GPU example above. Each process loads a model replica on its own local GPU. Two GPUs can improve examples/second, but DDP communication overhead means speedup is not guaranteed; compare steady-state throughput after warm-up.
+The two-GPU command uses rank-zero-only preprocessing to avoid concurrent writes, NCCL for GPU communication, and one Trainer process per GPU. It defaults to LoRA adapter fine-tuning (only small adapter matrices are trainable), a 512-token context, per-device batch 2, accumulation 4, and a 1,200-step cap. The effective batch size is 16 across two GPUs. The step cap is a time-budget guard, not a promise that every Kaggle T4 x2 session will finish within 12 hours; check the first 20–30 steps and estimate from measured throughput. LoRA adapters are saved with their base-model reference and are loaded automatically by the runtime. Use `--full-finetune` to train every parameter, but that is substantially slower and is not recommended for a 12-hour T4 budget.
 
-Full fine-tuning is memory-intensive. A 1,024-token context is a practical starting point for T4 GPUs; increase it only after measuring memory and throughput. CPU training is disabled by default because a 500M full fine-tune on CPU is impractically slow. `--allow-cpu` is available only for deliberate experiments.
+The shorter 512-token context and LoRA mode are deliberate speed choices. Increase context only after measuring throughput. CPU training is disabled by default because full fine-tuning a 500M model on CPU is impractically slow. `--allow-cpu` is available only for deliberate experiments.
 
 ### 4. TPU note
 
