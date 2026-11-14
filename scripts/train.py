@@ -7,6 +7,12 @@ import random
 from datetime import datetime, timezone
 from pathlib import Path
 
+# This project trains with PyTorch only. Disable optional TensorFlow/Flax
+# backend discovery before importing Hugging Face libraries; it can otherwise
+# emit a misleading TensorFlow CUDA-stub warning in Kaggle even when PyTorch CUDA works.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("USE_FLAX", "0")
+
 import numpy as np
 import torch
 from datasets import load_dataset
@@ -14,6 +20,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
     set_seed,
 )
@@ -54,6 +61,27 @@ def encode_row(row, tokenizer, max_length: int):
     if not features:
         return {"input_ids": [], "attention_mask": [], "labels": [], "valid": False}
     return {**features, "valid": True}
+
+
+class CudaStepMonitor(TrainerCallback):
+    """Report real CUDA allocation during training, not just CUDA availability."""
+
+    def __init__(self, interval: int):
+        self.interval = max(1, interval)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if not torch.cuda.is_available():
+            return control
+        if state.global_step == 1 or state.global_step % self.interval == 0:
+            torch.cuda.synchronize(0)
+            allocated = torch.cuda.memory_allocated(0) / 2**30
+            reserved = torch.cuda.memory_reserved(0) / 2**30
+            print(
+                f"GPU active: step {state.global_step} | "
+                f"allocated {allocated:.2f} GiB | reserved {reserved:.2f} GiB",
+                flush=True,
+            )
+        return control
 
 
 def main() -> None:
@@ -244,6 +272,7 @@ def main() -> None:
         eval_dataset=encoded["validation"],
         data_collator=collator,
         processing_class=tokenizer,
+        callbacks=[CudaStepMonitor(args.logging_steps)],
     )
     trainer_device = trainer.args.device
     print(f"Trainer device: {trainer_device}", flush=True)
