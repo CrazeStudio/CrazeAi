@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.cache/
+.huggingface/
+data/database.jsonl
+data/processed/
+outputs/
+runs/
+*.log
