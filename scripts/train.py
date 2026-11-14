@@ -47,6 +47,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--num-proc", type=int, default=1)
     parser.add_argument("--resume-from-checkpoint", type=str, default=None)
+    parser.add_argument("--full-finetune", action="store_true", help="Train every model parameter; slower and more memory-intensive than the default LoRA mode.")
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--allow-cpu", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -307,11 +311,30 @@ def main() -> None:
         )
 
     model.config.use_cache = False
-    model.gradient_checkpointing_enable(
-        gradient_checkpointing_kwargs={"use_reentrant": False}
-    )
-    if hasattr(model, "enable_input_require_grads"):
-        model.enable_input_require_grads()
+    trainable_parameters = parameter_count
+    if not args.full_finetune:
+        from peft import LoraConfig, get_peft_model
+
+        lora_config = LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        )
+        model = get_peft_model(model, lora_config)
+        trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        model.print_trainable_parameters()
+        print(f"Training mode: LoRA | trainable parameters: {trainable_parameters:,}", flush=True)
+    else:
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        print("Training mode: full fine-tuning (slower)", flush=True)
+
 
     collator = CausalLMCollator(tokenizer.pad_token_id)
     training_args = TrainingArguments(
@@ -338,7 +361,7 @@ def main() -> None:
         greater_is_better=False,
         bf16=use_bf16,
         fp16=use_cuda and not use_bf16,
-        gradient_checkpointing=True,
+        gradient_checkpointing=args.full_finetune,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         optim="adamw_torch",
         dataloader_num_workers=2 if use_cuda else 0,
@@ -383,6 +406,9 @@ def main() -> None:
         "project": "CrazeAI",
         "base_model": args.model,
         "actual_parameter_count": parameter_count,
+        "training_mode": "full-finetune" if args.full_finetune else "LoRA",
+        "trainable_parameter_count": trainable_parameters,
+        "lora_rank": None if args.full_finetune else args.lora_r,
         "parameter_class": "approximately 500M",
         "framework": f"PyTorch {torch.__version__}",
         "device": (
