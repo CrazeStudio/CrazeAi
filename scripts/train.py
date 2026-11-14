@@ -78,6 +78,7 @@ def main() -> None:
     use_cuda = torch.cuda.is_available()
     use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
     if use_cuda:
+        torch.cuda.set_device(0)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         torch_dtype = torch.bfloat16 if use_bf16 else torch.float16
@@ -146,6 +147,22 @@ def main() -> None:
             f"Loaded checkpoint is not in the requested 500M class: {parameter_count:,} parameters"
         )
 
+    # Place the model on CUDA explicitly. Tokenization above is intentionally CPU-side;
+    # the model forward/backward passes and optimizer updates must run on the GPU.
+    if use_cuda:
+        model = model.to(torch.device("cuda:0"))
+        first_parameter_device = next(model.parameters()).device
+        if first_parameter_device.type != "cuda":
+            raise RuntimeError(
+                f"CUDA was detected but the model is on {first_parameter_device}; refusing CPU training."
+            )
+        print(f"Model device: {first_parameter_device}", flush=True)
+        print(
+            "CUDA allocated GiB before training:",
+            round(torch.cuda.memory_allocated(0) / 2**30, 2),
+            flush=True,
+        )
+
     model.config.use_cache = False
     model.gradient_checkpointing_enable(
         gradient_checkpointing_kwargs={"use_reentrant": False}
@@ -156,6 +173,7 @@ def main() -> None:
     collator = CausalLMCollator(tokenizer.pad_token_id)
     training_args = TrainingArguments(
         output_dir=str(args.output),
+        use_cpu=not use_cuda,
         num_train_epochs=args.epochs,
         max_steps=args.max_steps,
         per_device_train_batch_size=args.batch_size,
@@ -197,6 +215,15 @@ def main() -> None:
         data_collator=collator,
         processing_class=tokenizer,
     )
+    trainer_device = trainer.args.device
+    print(f"Trainer device: {trainer_device}", flush=True)
+    if use_cuda and trainer_device.type != "cuda":
+        raise RuntimeError(
+            f"CUDA is available but Hugging Face Trainer selected {trainer_device}; refusing CPU training."
+        )
+    if use_cuda and next(trainer.model.parameters()).device.type != "cuda":
+        raise RuntimeError("Trainer model is not on CUDA; refusing to start training.")
+
     train_result = trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
     eval_metrics = trainer.evaluate()
 
