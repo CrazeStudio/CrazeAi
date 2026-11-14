@@ -66,18 +66,23 @@ def encode_row(row, tokenizer, max_length: int):
 class CudaStepMonitor(TrainerCallback):
     """Report real CUDA allocation during training, not just CUDA availability."""
 
-    def __init__(self, interval: int):
+    def __init__(self, interval: int, device_index: int, is_main_process: bool):
         self.interval = max(1, interval)
+        self.device_index = device_index
+        self.is_main_process = is_main_process
 
     def on_step_end(self, args, state, control, **kwargs):
         if not torch.cuda.is_available():
             return control
-        if state.global_step == 1 or state.global_step % self.interval == 0:
-            torch.cuda.synchronize(0)
-            allocated = torch.cuda.memory_allocated(0) / 2**30
-            reserved = torch.cuda.memory_reserved(0) / 2**30
+        if self.is_main_process and (
+            state.global_step == 1 or state.global_step % self.interval == 0
+        ):
+            torch.cuda.synchronize(self.device_index)
+            allocated = torch.cuda.memory_allocated(self.device_index) / 2**30
+            reserved = torch.cuda.memory_reserved(self.device_index) / 2**30
             print(
                 f"GPU active: step {state.global_step} | "
+                f"rank device cuda:{self.device_index} | "
                 f"allocated {allocated:.2f} GiB | reserved {reserved:.2f} GiB",
                 flush=True,
             )
@@ -104,14 +109,38 @@ def main() -> None:
     random.seed(args.seed)
     np.random.seed(args.seed)
     use_cuda = torch.cuda.is_available()
-    use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    global_rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    distributed = world_size > 1
+    is_main_process = global_rank == 0
+
+    if distributed and not use_cuda:
+        raise RuntimeError("Multi-process DDP requires CUDA GPUs; CUDA was not detected.")
     if use_cuda:
-        torch.cuda.set_device(0)
+        if local_rank >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"LOCAL_RANK={local_rank}, but only {torch.cuda.device_count()} CUDA device(s) are visible."
+            )
+        torch.cuda.set_device(local_rank)
+        if distributed and not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend="nccl", init_method="env://")
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        use_bf16 = torch.cuda.is_bf16_supported()
         torch_dtype = torch.bfloat16 if use_bf16 else torch.float16
-        print("CUDA device:", torch.cuda.get_device_name(0))
-        print("CUDA VRAM GiB:", round(torch.cuda.get_device_properties(0).total_memory / 2**30, 2))
+        if is_main_process:
+            print(
+                f"CUDA devices visible: {torch.cuda.device_count()} | "
+                f"distributed world size: {world_size}",
+                flush=True,
+            )
+        print(
+            f"Rank {global_rank}: {torch.cuda.get_device_name(local_rank)} "
+            f"(cuda:{local_rank}) | VRAM GiB: "
+            f"{torch.cuda.get_device_properties(local_rank).total_memory / 2**30:.2f}",
+            flush=True,
+        )
     else:
         torch_dtype = torch.float32
         torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
@@ -127,7 +156,8 @@ def main() -> None:
     # environment, datasets.map fingerprints closures with dill and can emit
     # BufferError: Existing exports of data: object cannot be re-sized.
     # Direct streaming avoids dill serialization and keeps RAM usage bounded.
-    print("Tokenizing JSONL directly (CPU preprocessing; no datasets.map/dill)", flush=True)
+    if is_main_process:
+        print("Tokenizing JSONL directly (CPU preprocessing; rank 0 only; no datasets.map/dill)", flush=True)
     args.output.mkdir(parents=True, exist_ok=True)
     tokenized_dir = args.output / "tokenized"
     tokenized_dir.mkdir(parents=True, exist_ok=True)
@@ -152,9 +182,9 @@ def main() -> None:
                 seen_count += 1
                 if feature.get("valid"):
                     feature.pop("valid", None)
-                    destination.write(json.dumps(feature, separators=(",", ":")) + "\n")
+                    destination.write(json.dumps(feature, separators=(",", ":")) + "\\n")
                     valid_count += 1
-                if seen_count % 500 == 0:
+                if is_main_process and seen_count % 500 == 0:
                     print(
                         f"{split_name}: processed {seen_count:,} / "
                         f"valid {valid_count:,}",
@@ -164,18 +194,25 @@ def main() -> None:
             temporary_path.unlink(missing_ok=True)
             raise RuntimeError(f"No valid assistant-supervised examples remain in {split_name}")
         temporary_path.replace(destination_path)
-        print(
-            f"{split_name}: {valid_count:,} supervised records from {seen_count:,}",
-            flush=True,
-        )
+        if is_main_process:
+            print(
+                f"{split_name}: {valid_count:,} supervised records from {seen_count:,}",
+                flush=True,
+            )
         return valid_count
 
     train_tokenized = tokenized_dir / "train.jsonl"
     validation_tokenized = tokenized_dir / "validation.jsonl"
-    train_count = tokenize_jsonl(args.train, train_tokenized, "train")
-    validation_count = tokenize_jsonl(args.validation, validation_tokenized, "validation")
+    if is_main_process:
+        tokenize_jsonl(args.train, train_tokenized, "train")
+        tokenize_jsonl(args.validation, validation_tokenized, "validation")
+    if distributed:
+        torch.distributed.barrier()
+    if not train_tokenized.is_file() or not validation_tokenized.is_file():
+        raise FileNotFoundError("Rank 0 did not produce the shared tokenized JSONL files.")
 
-    print("Loading pre-tokenized datasets", flush=True)
+    if is_main_process:
+        print("Loading pre-tokenized datasets", flush=True)
     encoded = load_dataset(
         "json",
         data_files={
@@ -185,12 +222,15 @@ def main() -> None:
     )
     if not len(encoded["train"]) or not len(encoded["validation"]):
         raise RuntimeError("Both tokenized train and validation datasets must be non-empty")
-    print(
-        f"Ready: {train_count:,} train / {validation_count:,} validation examples",
-        flush=True,
-    )
+    if is_main_process:
+        print(
+            f"Ready: {len(encoded['train']):,} train / "
+            f"{len(encoded['validation']):,} validation examples",
+            flush=True,
+        )
 
-    print("Loading model:", args.model, flush=True)
+    if is_main_process:
+        print("Loading model:", args.model, flush=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch_dtype,
@@ -199,7 +239,8 @@ def main() -> None:
         trust_remote_code=False,
     )
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
-    print(f"Actual model parameters: {parameter_count:,} ({parameter_count / 1e9:.3f}B)")
+    if is_main_process:
+        print(f"Actual model parameters: {parameter_count:,} ({parameter_count / 1e9:.3f}B)")
     if not 450_000_000 <= parameter_count <= 550_000_000:
         raise RuntimeError(
             f"Loaded checkpoint is not in the requested 500M class: {parameter_count:,} parameters"
@@ -208,16 +249,16 @@ def main() -> None:
     # Place the model on CUDA explicitly. Tokenization above is intentionally CPU-side;
     # the model forward/backward passes and optimizer updates must run on the GPU.
     if use_cuda:
-        model = model.to(torch.device("cuda:0"))
+        model = model.to(torch.device(f"cuda:{local_rank}"))
         first_parameter_device = next(model.parameters()).device
         if first_parameter_device.type != "cuda":
             raise RuntimeError(
                 f"CUDA was detected but the model is on {first_parameter_device}; refusing CPU training."
             )
-        print(f"Model device: {first_parameter_device}", flush=True)
+        print(f"Rank {global_rank} model device: {first_parameter_device}", flush=True)
         print(
-            "CUDA allocated GiB before training:",
-            round(torch.cuda.memory_allocated(0) / 2**30, 2),
+            f"Rank {global_rank} CUDA allocated GiB before training:",
+            round(torch.cuda.memory_allocated(local_rank) / 2**30, 2),
             flush=True,
         )
 
@@ -258,6 +299,8 @@ def main() -> None:
         optim="adamw_torch",
         dataloader_num_workers=2 if use_cuda else 0,
         dataloader_pin_memory=use_cuda,
+        ddp_backend="nccl" if distributed else None,
+        ddp_find_unused_parameters=False if distributed else None,
         remove_unused_columns=False,
         report_to="none",
         save_safetensors=True,
@@ -272,10 +315,10 @@ def main() -> None:
         eval_dataset=encoded["validation"],
         data_collator=collator,
         processing_class=tokenizer,
-        callbacks=[CudaStepMonitor(args.logging_steps)],
+        callbacks=[CudaStepMonitor(args.logging_steps, local_rank, is_main_process)],
     )
     trainer_device = trainer.args.device
-    print(f"Trainer device: {trainer_device}", flush=True)
+    print(f"Rank {global_rank} trainer device: {trainer_device}", flush=True)
     if use_cuda and trainer_device.type != "cuda":
         raise RuntimeError(
             f"CUDA is available but Hugging Face Trainer selected {trainer_device}; refusing CPU training."
@@ -288,8 +331,9 @@ def main() -> None:
 
     args.output.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(args.output))
-    tokenizer.save_pretrained(str(args.output))
-    trainer.save_state()
+    if is_main_process:
+        tokenizer.save_pretrained(str(args.output))
+        trainer.save_state()
 
     report = {
         "project": "CrazeAI",
@@ -297,7 +341,11 @@ def main() -> None:
         "actual_parameter_count": parameter_count,
         "parameter_class": "approximately 500M",
         "framework": f"PyTorch {torch.__version__}",
-        "device": torch.cuda.get_device_name(0) if use_cuda else "CPU",
+        "device": (
+            [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
+            if use_cuda else "CPU"
+        ),
+        "world_size": world_size,
         "dtype": str(torch_dtype),
         "train_examples": len(encoded["train"]),
         "validation_examples": len(encoded["validation"]),
@@ -311,11 +359,16 @@ def main() -> None:
         "finished_at_utc": datetime.now(timezone.utc).isoformat(),
         "note": "Fine-tuned from the declared pretrained checkpoint; not pretrained from random initialization.",
     }
-    (args.output / "training_report.json").write_text(
-        json.dumps(report, indent=2, default=str) + "\n",
-        encoding="utf-8",
-    )
-    print(json.dumps(report, indent=2, default=str))
+    if is_main_process:
+        (args.output / "training_report.json").write_text(
+            json.dumps(report, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        print(json.dumps(report, indent=2, default=str))
+
+    if distributed and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
