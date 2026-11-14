@@ -1,0 +1,98 @@
+name: Train CrazeAI 500M (PyTorch)
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "auto uses data/database.jsonl if present, otherwise public SmolTalk"
+        type: choice
+        options: [auto, local, hf]
+        default: auto
+        required: true
+      epochs:
+        description: "Full fine-tuning epochs"
+        type: number
+        default: 2
+        required: true
+      max_length:
+        description: "Training sequence length"
+        type: choice
+        options: [1024, 1536, 2048]
+        default: "2048"
+        required: true
+      gradient_accumulation:
+        description: "Gradient accumulation steps"
+        type: number
+        default: 16
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: crazeai-pytorch-training
+  cancel-in-progress: false
+jobs:
+  train:
+    # Configure a self-hosted Linux runner with an NVIDIA GPU and the label 'gpu'.
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyTorch stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Verify CUDA before downloading the dataset
+        run: |
+          python - <<'PY'
+          import torch
+          print('PyTorch:', torch.__version__)
+          print('CUDA build:', torch.version.cuda)
+          print('CUDA available:', torch.cuda.is_available())
+          if not torch.cuda.is_available():
+              raise SystemExit('This workflow requires a working CUDA-enabled PyTorch install.')
+          print('GPU:', torch.cuda.get_device_name(0))
+          print('VRAM GiB:', round(torch.cuda.get_device_properties(0).total_memory / 2**30, 2))
+          PY
+      - name: Prepare exactly 50,000 unique examples
+        run: |
+          python scripts/prepare_dataset.py --count 50000 --source "${{ inputs.source }}"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('data/processed/manifest.json')
+          m = json.loads(p.read_text())
+          assert m['unique_examples'] == 50000, m
+          assert m['train_examples'] + m['validation_examples'] == 50000, m
+          print(json.dumps(m, indent=2))
+          PY
+      - name: Full-parameter PyTorch fine-tuning
+        run: |
+          python scripts/train.py \
+            --train data/processed/train.jsonl \
+            --validation data/processed/validation.jsonl \
+            --output outputs/crazeai-500m \
+            --epochs "${{ inputs.epochs }}" \
+            --max-length "${{ inputs.max_length }}" \
+            --batch-size 1 \
+            --gradient-accumulation "${{ inputs.gradient_accumulation }}"
+      - name: Evaluate resulting checkpoint
+        run: |
+          python scripts/evaluate.py \
+            --model outputs/crazeai-500m \
+            --validation data/processed/validation.jsonl \
+            --output outputs/crazeai-500m/evaluation.json \
+            --max-length "${{ inputs.max_length }}"
+      - name: Upload model and reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: crazeai-500m-pytorch
+          path: |
+            outputs/crazeai-500m/
+            data/processed/manifest.json
+          if-no-files-found: error
+          retention-days: 30
