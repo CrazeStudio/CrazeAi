@@ -15,7 +15,6 @@ os.environ.setdefault("USE_FLAX", "0")
 
 import numpy as np
 import torch
-from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -51,6 +50,57 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-cpu", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
+
+
+class TokenizedJsonlDataset(torch.utils.data.Dataset):
+    """Random-access JSONL dataset without pandas/PyArrow JSON inference."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.offsets: list[int] = []
+        offset = 0
+        with self.path.open("rb") as source:
+            for line in source:
+                if line.strip():
+                    self.offsets.append(offset)
+                offset += len(line)
+        if not self.offsets:
+            raise RuntimeError(f"No tokenized examples found in {self.path}")
+        self._file = None
+        self._pid = None
+
+    def __len__(self) -> int:
+        return len(self.offsets)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_file"] = None
+        state["_pid"] = None
+        return state
+
+    def __getitem__(self, index: int):
+        if index < 0:
+            index += len(self.offsets)
+        if index < 0 or index >= len(self.offsets):
+            raise IndexError(index)
+        pid = os.getpid()
+        if self._file is None or self._pid != pid:
+            if self._file is not None:
+                self._file.close()
+            self._file = self.path.open("rb")
+            self._pid = pid
+        self._file.seek(self.offsets[index])
+        raw = self._file.readline()
+        try:
+            feature = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(
+                f"Invalid tokenized JSONL record {index} in {self.path}"
+            ) from exc
+        required = ("input_ids", "attention_mask", "labels")
+        if any(key not in feature for key in required):
+            raise ValueError(f"Tokenized record {index} is missing required fields")
+        return {key: feature[key] for key in required}
 
 
 def encode_row(row, tokenizer, max_length: int):
@@ -213,20 +263,13 @@ def main() -> None:
         raise FileNotFoundError("Rank 0 did not produce the shared tokenized JSONL files.")
 
     if is_main_process:
-        print("Loading pre-tokenized datasets", flush=True)
-    encoded = load_dataset(
-        "json",
-        data_files={
-            "train": str(train_tokenized),
-            "validation": str(validation_tokenized),
-        },
-    )
-    if not len(encoded["train"]) or not len(encoded["validation"]):
-        raise RuntimeError("Both tokenized train and validation datasets must be non-empty")
+        print("Loading pre-tokenized JSONL with native PyTorch reader (no pandas/PyArrow)", flush=True)
+    train_dataset = TokenizedJsonlDataset(train_tokenized)
+    validation_dataset = TokenizedJsonlDataset(validation_tokenized)
     if is_main_process:
         print(
-            f"Ready: {len(encoded['train']):,} train / "
-            f"{len(encoded['validation']):,} validation examples",
+            f"Ready: {len(train_dataset):,} train / "
+            f"{len(validation_dataset):,} validation examples",
             flush=True,
         )
 
@@ -312,8 +355,8 @@ def main() -> None:
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=encoded["train"],
-        eval_dataset=encoded["validation"],
+        train_dataset=train_dataset,
+        eval_dataset=validation_dataset,
         data_collator=collator,
         processing_class=tokenizer,
         callbacks=[CudaStepMonitor(args.logging_steps, local_rank, is_main_process)],
@@ -348,8 +391,8 @@ def main() -> None:
         ),
         "world_size": world_size,
         "dtype": str(torch_dtype),
-        "train_examples": len(encoded["train"]),
-        "validation_examples": len(encoded["validation"]),
+        "train_examples": len(train_dataset),
+        "validation_examples": len(validation_dataset),
         "epochs_requested": args.epochs,
         "max_length": args.max_length,
         "batch_size": args.batch_size,
