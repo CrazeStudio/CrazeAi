@@ -42,13 +42,27 @@ class CrazeAIRuntime:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-            trust_remote_code=False,
-        )
+        adapter_config = Path(self.model_name) / "adapter_config.json"
+        if adapter_config.is_file():
+            from peft import PeftConfig, PeftModel
+
+            peft_config = PeftConfig.from_pretrained(self.model_name)
+            base_model = AutoModelForCausalLM.from_pretrained(
+                peft_config.base_model_name_or_path,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                trust_remote_code=False,
+            )
+            self.model = PeftModel.from_pretrained(base_model, self.model_name)
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+                trust_remote_code=False,
+            )
         self.model.to(self.device)
         self.model.eval()
         self.model.config.use_cache = True
