@@ -114,6 +114,7 @@ def main() -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     distributed = world_size > 1
     is_main_process = global_rank == 0
+    use_bf16 = False
 
     if distributed and not use_cuda:
         raise RuntimeError("Multi-process DDP requires CUDA GPUs; CUDA was not detected.")
