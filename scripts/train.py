@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logging-steps", type=int, default=25)
     parser.add_argument("--save-total-limit", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=-1)
+    parser.add_argument("--max-train-examples", type=int, default=0, help="Limit training to the first N tokenized examples; 0 uses the full dataset.")
     parser.add_argument("--num-proc", type=int, default=1)
     parser.add_argument("--resume-from-checkpoint", type=str, default=None)
     parser.add_argument("--full-finetune", action="store_true", help="Train every model parameter; slower and more memory-intensive than the default LoRA mode.")
@@ -270,6 +271,18 @@ def main() -> None:
         print("Loading pre-tokenized JSONL with native PyTorch reader (no pandas/PyArrow)", flush=True)
     train_dataset = TokenizedJsonlDataset(train_tokenized)
     validation_dataset = TokenizedJsonlDataset(validation_tokenized)
+    if args.max_train_examples < 0:
+        raise ValueError("--max-train-examples must be 0 (unlimited) or a positive integer")
+    if args.max_train_examples:
+        train_dataset.offsets = train_dataset.offsets[:args.max_train_examples]
+        if not train_dataset.offsets:
+            raise ValueError("--max-train-examples selected zero training examples")
+        if is_main_process:
+            print(
+                f"Development limit enabled: using {len(train_dataset):,} training examples "
+                f"(requested maximum {args.max_train_examples:,})",
+                flush=True,
+            )
     if is_main_process:
         print(
             f"Ready: {len(train_dataset):,} train / "
@@ -419,6 +432,7 @@ def main() -> None:
         "world_size": world_size,
         "dtype": str(torch_dtype),
         "train_examples": len(train_dataset),
+        "max_train_examples": args.max_train_examples or None,
         "validation_examples": len(validation_dataset),
         "epochs_requested": args.epochs,
         "max_length": args.max_length,
