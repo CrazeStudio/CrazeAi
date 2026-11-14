@@ -102,15 +102,6 @@ def main() -> None:
     if not len(raw["train"]) or not len(raw["validation"]):
         raise RuntimeError("Both train and validation datasets must be non-empty")
 
-    def encode(batch):
-        features = [
-            encode_row(row, tokenizer, args.max_length)
-            for row in zip(batch["messages"], batch.get("source", [""] * len(batch["messages"])))
-        ]
-        # Dataset.map with batched=True receives columns, so rebuild record-by-record.
-        # The next branch handles the actual dict-of-lists form below.
-        return features
-
     def encode_batch(batch):
         output = {"input_ids": [], "attention_mask": [], "labels": [], "valid": []}
         messages_col = batch["messages"]
