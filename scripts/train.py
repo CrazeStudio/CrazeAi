@@ -95,42 +95,72 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    print("Loading JSONL datasets", flush=True)
-    raw = load_dataset(
-        "json",
-        data_files={"train": str(args.train), "validation": str(args.validation)},
-    )
-    if not len(raw["train"]) or not len(raw["validation"]):
-        raise RuntimeError("Both train and validation datasets must be non-empty")
+    # Tokenize JSONL directly instead of Dataset.map(). In Kaggle's Python 3.13
+    # environment, datasets.map fingerprints closures with dill and can emit
+    # BufferError: Existing exports of data: object cannot be re-sized.
+    # Direct streaming avoids dill serialization and keeps RAM usage bounded.
+    print("Tokenizing JSONL directly (CPU preprocessing; no datasets.map/dill)", flush=True)
+    args.output.mkdir(parents=True, exist_ok=True)
+    tokenized_dir = args.output / "tokenized"
+    tokenized_dir.mkdir(parents=True, exist_ok=True)
 
-    def encode_batch(batch):
-        output = {"input_ids": [], "attention_mask": [], "labels": [], "valid": []}
-        messages_col = batch["messages"]
-        sources_col = batch.get("source", [""] * len(messages_col))
-        for messages_obj, source in zip(messages_col, sources_col):
-            row = {"messages": messages_obj, "source": source}
-            feature = encode_row(row, tokenizer, args.max_length)
-            for key in ("input_ids", "attention_mask", "labels", "valid"):
-                output[key].append(feature[key])
-        return output
-
-    encoded = {}
-    for split_name in ("train", "validation"):
-        split = raw[split_name]
-        mapped = split.map(
-            encode_batch,
-            batched=True,
-            batch_size=128,
-            num_proc=max(1, args.num_proc),
-            remove_columns=split.column_names,
-            desc=f"Tokenizing {split_name} with assistant-only loss",
-        )
-        mapped = mapped.filter(lambda row: row["valid"], desc=f"Filtering invalid {split_name} rows")
-        mapped = mapped.remove_columns(["valid"])
-        if len(mapped) == 0:
+    def tokenize_jsonl(source_path: Path, destination_path: Path, split_name: str) -> int:
+        valid_count = 0
+        seen_count = 0
+        temporary_path = destination_path.with_suffix(destination_path.suffix + ".tmp")
+        with source_path.open("r", encoding="utf-8") as source, temporary_path.open(
+            "w", encoding="utf-8"
+        ) as destination:
+            for line_number, line in enumerate(source, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON in {source_path} at line {line_number}: {exc}"
+                    ) from exc
+                feature = encode_row(row, tokenizer, args.max_length)
+                seen_count += 1
+                if feature.get("valid"):
+                    feature.pop("valid", None)
+                    destination.write(json.dumps(feature, separators=(",", ":")) + "\\n")
+                    valid_count += 1
+                if seen_count % 500 == 0:
+                    print(
+                        f"{split_name}: processed {seen_count:,} / "
+                        f"valid {valid_count:,}",
+                        flush=True,
+                    )
+        if valid_count == 0:
+            temporary_path.unlink(missing_ok=True)
             raise RuntimeError(f"No valid assistant-supervised examples remain in {split_name}")
-        encoded[split_name] = mapped
-        print(f"{split_name}: {len(mapped):,} supervised records", flush=True)
+        temporary_path.replace(destination_path)
+        print(
+            f"{split_name}: {valid_count:,} supervised records from {seen_count:,}",
+            flush=True,
+        )
+        return valid_count
+
+    train_tokenized = tokenized_dir / "train.jsonl"
+    validation_tokenized = tokenized_dir / "validation.jsonl"
+    train_count = tokenize_jsonl(args.train, train_tokenized, "train")
+    validation_count = tokenize_jsonl(args.validation, validation_tokenized, "validation")
+
+    print("Loading pre-tokenized datasets", flush=True)
+    encoded = load_dataset(
+        "json",
+        data_files={
+            "train": str(train_tokenized),
+            "validation": str(validation_tokenized),
+        },
+    )
+    if not len(encoded["train"]) or not len(encoded["validation"]):
+        raise RuntimeError("Both tokenized train and validation datasets must be non-empty")
+    print(
+        f"Ready: {train_count:,} train / {validation_count:,} validation examples",
+        flush=True,
+    )
 
     print("Loading model:", args.model, flush=True)
     model = AutoModelForCausalLM.from_pretrained(
