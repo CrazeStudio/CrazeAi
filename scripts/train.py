@@ -233,7 +233,7 @@ def main() -> None:
                 seen_count += 1
                 if feature.get("valid"):
                     feature.pop("valid", None)
-                    destination.write(json.dumps(feature, separators=(",", ":")) + "\\n")
+                    destination.write(json.dumps(feature, separators=(",", ":")) + "\n")
                     valid_count += 1
                 if is_main_process and seen_count % 500 == 0:
                     print(
