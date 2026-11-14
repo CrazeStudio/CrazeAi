@@ -68,12 +68,17 @@ def load_seed_rows() -> list[tuple[list[dict[str, str]], str]]:
     return rows
 
 
-def load_local_rows(path: Path, needed: int, seed: int) -> list[tuple[list[dict[str, str]], str]]:
+def load_local_rows(
+    path: Path,
+    needed: int,
+    seed: int,
+    reserved_hashes: set[str] | None = None,
+) -> list[tuple[list[dict[str, str]], str]]:
     if not path.is_file():
         raise FileNotFoundError(f"Local database was requested but not found: {path}")
     rng = random.Random(seed)
     selected: list[tuple[list[dict[str, str]], str]] = []
-    seen: set[str] = set()
+    seen: set[str] = set(reserved_hashes or ())
     unique_seen = 0
 
     # Reservoir sampling keeps a deterministic representative subset without
@@ -105,7 +110,11 @@ def load_local_rows(path: Path, needed: int, seed: int) -> list[tuple[list[dict[
     return selected
 
 
-def load_huggingface_rows(needed: int, seed: int) -> list[tuple[list[dict[str, str]], str]]:
+def load_huggingface_rows(
+    needed: int,
+    seed: int,
+    reserved_hashes: set[str] | None = None,
+) -> list[tuple[list[dict[str, str]], str]]:
     try:
         from datasets import load_dataset
     except ImportError as exc:
@@ -114,7 +123,7 @@ def load_huggingface_rows(needed: int, seed: int) -> list[tuple[list[dict[str, s
         ) from exc
 
     selected: list[tuple[list[dict[str, str]], str]] = []
-    seen: set[str] = set()
+    seen: set[str] = set(reserved_hashes or ())
     for config_name, quota in HF_MIX:
         remaining = min(quota, needed - len(selected))
         if remaining <= 0:
@@ -173,11 +182,12 @@ def main() -> None:
     if len(seeds) > args.count:
         raise RuntimeError("CrazeAI seed examples exceed the requested corpus size")
     needed = args.count - len(seeds)
+    seed_hashes = {canonical_hash(messages) for messages, _ in seeds}
 
     use_local = args.source == "local" or (args.source == "auto" and args.input.is_file())
     if use_local:
         print(f"Using local database: {args.input}", flush=True)
-        data_rows = load_local_rows(args.input, needed, args.seed)
+        data_rows = load_local_rows(args.input, needed, args.seed, seed_hashes)
         source_mode = "local"
     else:
         if args.source == "local":
@@ -187,7 +197,7 @@ def main() -> None:
             "This is a public fallback, not a recovered private database.",
             flush=True,
         )
-        data_rows = load_huggingface_rows(needed, args.seed)
+        data_rows = load_huggingface_rows(needed, args.seed, seed_hashes)
         source_mode = "huggingface"
 
     rows = seeds + data_rows
