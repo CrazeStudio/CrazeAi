@@ -33,11 +33,13 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       TOKENIZERS_PARALLELISM: "false"
-      HF_HOME: ${{ runner.temp }}/huggingface
       RELEASE_TAG: ${{ inputs.release_tag }}
       QUANTIZATION: ${{ inputs.quantization }}
 
     steps:
+      - name: Set Hugging Face cache
+        run: echo "HF_HOME=$RUNNER_TEMP/huggingface" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
