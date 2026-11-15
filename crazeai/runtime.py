@@ -40,10 +40,10 @@ class CrazeAIRuntime:
             raise ValueError("max_new_tokens must be between 1 and 2048")
         if not 0.0 <= temperature <= 2.0 or not 0.05 <= top_p <= 1.0:
             raise ValueError("Invalid temperature or top_p")
-        text = "\\n".join(
+        text = "\n".join(
             f"{m.get('role', 'user').upper()}: {m.get('content', '')}"
             for m in messages if isinstance(m, dict)
-        ) + "\\nASSISTANT:"
+        ) + "\nASSISTANT:"
         ids = self.tokenizer.encode(text).ids
         if self.bos_id is not None:
             ids.insert(0, self.bos_id)
