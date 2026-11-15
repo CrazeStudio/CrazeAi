@@ -35,8 +35,8 @@ def main() -> None:
     parser.add_argument("--model", default="outputs/crazeai-500m")
     parser.add_argument("--validation", type=Path, default=Path("data/processed/validation.jsonl"))
     parser.add_argument("--output", type=Path, default=Path("outputs/crazeai-500m/evaluation.json"))
-    parser.add_argument("--max-length", type=int, default=2048)
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
 
     if not args.validation.is_file():
@@ -48,6 +48,9 @@ def main() -> None:
     model = runtime.model
     tokenizer = runtime.tokenizer
     features = read_validation(args.validation, tokenizer, args.max_length)
+    # Sort by length so batches need minimal padding (loss is token-weighted below,
+    # so ordering does not change the result).
+    features.sort(key=lambda feature: len(feature["input_ids"]))
     collator = CausalLMCollator(tokenizer.pad_token_id)
     model.eval()
 
