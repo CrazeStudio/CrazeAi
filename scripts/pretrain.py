@@ -136,7 +136,7 @@ def evaluate(model, loader, device, amp_dtype, max_batches=20):
 def save_checkpoint(output, model, optimizer, step, tokenizer_path, config):
     output.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output)
-    shutil.copy2(tokenizer_path, output / "tokenizer.json")
+    destination_tokenizer = output / "tokenizer.json"\n    if tokenizer_path.resolve() != destination_tokenizer.resolve():\n        shutil.copy2(tokenizer_path, destination_tokenizer)
     state = {
         "step": step,
         "model": model.state_dict(),
@@ -194,7 +194,7 @@ def main():
         print(f"GPU: {torch.cuda.get_device_name(0)}", flush=True)
         use_bf16 = torch.cuda.is_bf16_supported()
         amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
-        scaler = torch.cuda.amp.GradScaler(enabled=not use_bf16)
+        scaler = torch.amp.GradScaler("cuda", enabled=not use_bf16)
         print(f"Mixed precision: {'BF16' if use_bf16 else 'FP16'}", flush=True)
     else:
         amp_dtype = torch.float32
