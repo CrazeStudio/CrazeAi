@@ -5,7 +5,7 @@ CrazeAI is a CrazeStudio assistant built with **PyTorch**. This repository conta
 ## Model decision
 
 - Target class: **500M parameters**.
-- Checkpoint: \`Qwen/Qwen2.5-0.5B-Instruct\` (**0.49B actual parameters**, approximately 500M).
+- Checkpoint: `Qwen/Qwen2.5-0.5B-Instruct` (**0.49B actual parameters**, approximately 500M).
 - Framework: PyTorch through Hugging Face Transformers.
 - Training: full-parameter supervised fine-tuning by default; no random reinitialization of a 500M model.
 - Dataset: exactly **50,000 unique examples**, with a deterministic 98%/2% train/validation split.
@@ -15,9 +15,9 @@ CrazeAI is a new project and fine-tuned model identity, not a foundation model p
 
 ## Dataset handling
 
-The pipeline first looks for \`data/database.jsonl\`. This is the supported location for an existing local database. Accepted records may contain a \`messages\` array (roles: \`system\`, \`user\`, \`assistant\`) or instruction/input/output fields.
+The pipeline first looks for `data/database.jsonl`. This is the supported location for an existing local database. Accepted records may contain a `messages` array (roles: `system`, `user`, `assistant`) or instruction/input/output fields.
 
-**The repository snapshot recovered from Git history did not contain a 50K local database**; it contained only 22 legacy seed examples. Therefore, when \`data/database.jsonl\` is absent, the data builder uses the Apache-2.0 SmolTalk subsets \`smol-magpie-ultra\`, \`smol-rewrite\`, and \`smol-summarize\`, then adds the small CrazeAI seed set. Dataset source, selected counts, split sizes, and file hashes are written to \`data/processed/manifest.json\`. Upstream data is downloaded at run time and is not committed to this repository.
+**The repository snapshot recovered from Git history did not contain a 50K local database**; it contained only 22 legacy seed examples. Therefore, when `data/database.jsonl` is absent, the data builder uses the Apache-2.0 SmolTalk subsets `smol-magpie-ultra`, `smol-rewrite`, and `smol-summarize`, then adds the small CrazeAI seed set. Dataset source, selected counts, split sizes, and file hashes are written to `data/processed/manifest.json`. Upstream data is downloaded at run time and is not committed to this repository.
 
 The default mix is 31,992 Smol-Magpie-Ultra + 8,998 Smol-rewrite + 8,998 Smol-summarize + 12 CrazeAI seed records = 50,000 records. If the source changes or cannot provide the required unique records, preparation stops instead of silently training on fewer examples.
 
@@ -30,13 +30,13 @@ Use Python 3.11 or newer. Install a PyTorch build suitable for your machine, the
     python -m pip install --upgrade pip
     python -m pip install -r requirements.txt
 
-On Windows, activate the environment with \`.venv\\Scripts\\activate\`.
+On Windows, activate the environment with `.venv\\Scripts\\activate`.
 
 ### 1. Prepare exactly 50K examples
 
     python scripts/prepare_dataset.py --count 50000
 
-To use your own existing database, put it at \`data/database.jsonl\`. The builder automatically prefers that file. You can also select the source explicitly:
+To use your own existing database, put it at `data/database.jsonl`. The builder automatically prefers that file. You can also select the source explicitly:
 
     python scripts/prepare_dataset.py --source local --input data/database.jsonl --count 50000
 
@@ -89,15 +89,31 @@ If you want a standalone merged export first:
 
 If a supplied local path is missing or is not a model directory, the runtime now raises a clear `FileNotFoundError` listing nearby loadable checkpoints. When a requested path ends in `-export` but has not been created yet, CrazeAI checks for the matching training directory and loads its adapter directly if available, with a warning.
 
-### 7. Start the API
+### 7. Export the CrazeAI Test release to GGUF
+
+The GGUF exporter downloads the LoRA adapter from the GitHub release, merges it into `Qwen/Qwen2.5-0.5B-Instruct`, converts the merged model with llama.cpp, and quantizes it. It does not require a Kaggle training session; it only needs internet access and enough RAM and disk space to download and convert the base model.
+
+Install the project dependencies first, then run:
+
+    python scripts/export_gguf.py
+
+The default output is `outputs/gguf/CrazeAI-Test-Q4_K_M.gguf`. To export an unquantized FP16 GGUF instead:
+
+    python scripts/export_gguf.py --quantization F16
+
+Other supported quantization choices are `Q5_K_M` and `Q8_0`. The script clones llama.cpp into `tools/llama.cpp` and builds its CPU quantizer when quantization is enabled. Use `--keep-intermediates` to retain the merged Transformers model and temporary FP16 GGUF. You can override the release asset with `--adapter-url` and the destination with `--output-dir`.
+
+The exported GGUF is a standalone merged model; it no longer needs the LoRA adapter at inference time. Quantization reduces file size and can slightly affect output quality.
+
+### 8. Start the API
 
     export CRAZEAI_MODEL=outputs/crazeai-500m
     export CRAZEAI_API_KEY=replace-with-a-long-random-secret
     uvicorn crazeai.api:app --host 127.0.0.1 --port 8000
 
-Health check: \`GET /health\`
+Health check: `GET /health`
 
-Chat endpoint: \`POST /v1/chat/completions\`
+Chat endpoint: `POST /v1/chat/completions`
 
 Example request:
 
@@ -106,17 +122,17 @@ Example request:
       -H "Content-Type: application/json" \\
       -d '{"messages":[{"role":"user","content":"Hello, who are you?"}],"max_tokens":128}'
 
-For remote deployment, bind to the platform-provided port, set a strong \`CRAZEAI_API_KEY\`, and use a machine with enough RAM/VRAM for the model. Do not expose an unauthenticated API to the public internet.
+For remote deployment, bind to the platform-provided port, set a strong `CRAZEAI_API_KEY`, and use a machine with enough RAM/VRAM for the model. Do not expose an unauthenticated API to the public internet.
 
 ## GitHub Actions
 
-- \`.github/workflows/ci.yml\` runs syntax checks and unit tests on a standard CPU runner.
-- \`.github/workflows/train-pytorch.yml\` is manually dispatched on a self-hosted Linux CUDA runner labelled \`gpu\`. The runner must have a working NVIDIA driver and CUDA-compatible PyTorch environment. The workflow uploads the trained checkpoint and evaluation report as artifacts; it does not commit model weights to Git.
+- `.github/workflows/ci.yml` runs syntax checks and unit tests on a standard CPU runner.
+- `.github/workflows/train-pytorch.yml` is manually dispatched on a self-hosted Linux CUDA runner labelled `gpu`. The runner must have a working NVIDIA driver and CUDA-compatible PyTorch environment. The workflow uploads the trained checkpoint and evaluation report as artifacts; it does not commit model weights to Git.
 
 ## Repository layout
 
     crazeai/                  Runtime, prompt and data utilities
-    scripts/                  Prepare, train, evaluate and chat
+    scripts/                  Prepare, train, evaluate, chat and export
     data/crazeai_seed.jsonl   Small project identity/quality seed set
     data/database.jsonl       Optional user-provided existing database
     data/processed/           Generated train/validation data and manifest
