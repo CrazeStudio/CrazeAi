@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,14 @@ def main() -> None:
 
     zip_path = output_dir / "CrazeAI-Test-LoRA.zip"
     adapter_dir = download_adapter(args.adapter_url, zip_path)
+    adapter_config = json.loads(
+        (adapter_dir / "adapter_config.json").read_text(encoding="utf-8")
+    )
+    adapter_base = adapter_config.get("base_model_name_or_path")
+    if adapter_base and adapter_base != BASE_MODEL:
+        raise RuntimeError(
+            f"Unexpected adapter base model: {adapter_base}; expected {BASE_MODEL}"
+        )
 
     merged_dir = output_dir / "merged-transformers"
     run([
