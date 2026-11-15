@@ -1,0 +1,104 @@
+name: CrazeAI GGUF Export
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag containing CrazeAI-Test-LoRA.zip
+        required: true
+        type: string
+        default: v0.1.0-test
+      quantization:
+        description: GGUF quantization format
+        required: true
+        type: choice
+        options:
+          - Q4_K_M
+          - Q5_K_M
+          - Q8_0
+          - F16
+        default: Q4_K_M
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crazeai-gguf-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONUNBUFFERED: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HOME: ${{ runner.temp }}/huggingface
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      QUANTIZATION: ${{ inputs.quantization }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU PyTorch and CrazeAI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+
+      - name: Validate release and input
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$RELEASE_TAG" in
+            ""|*[!a-zA-Z0-9._-]*) echo "::error::Invalid release tag"; exit 1 ;;
+          esac
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "CrazeAI-Test-LoRA.zip" --dir "$RUNNER_TEMP/crazeai-release"
+          test -s "$RUNNER_TEMP/crazeai-release/CrazeAI-Test-LoRA.zip"
+
+      - name: Export and quantize GGUF
+        run: |
+          python scripts/export_gguf.py \
+            --adapter-url "file://$RUNNER_TEMP/crazeai-release/CrazeAI-Test-LoRA.zip" \
+            --output-dir "$RUNNER_TEMP/crazeai-gguf" \
+            --quantization "$QUANTIZATION"
+
+      - name: Verify GGUF output
+        run: |
+          FILE="$RUNNER_TEMP/crazeai-gguf/CrazeAI-Test-$QUANTIZATION.gguf"
+          test -s "$FILE"
+          ls -lh "$FILE"
+          sha256sum "$FILE" | tee "$RUNNER_TEMP/crazeai-gguf/SHA256SUMS.txt"
+
+      - name: Upload GGUF to CrazeAI Test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILE="$RUNNER_TEMP/crazeai-gguf/CrazeAI-Test-$QUANTIZATION.gguf"
+          gh release upload "$RELEASE_TAG" "$FILE" \
+            "$RUNNER_TEMP/crazeai-gguf/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## CrazeAI GGUF export"
+            echo "- Release: $RELEASE_TAG"
+            echo "- Quantization: $QUANTIZATION"
+            if [ -s "$RUNNER_TEMP/crazeai-gguf/CrazeAI-Test-$QUANTIZATION.gguf" ]; then
+              echo "- Output: CrazeAI-Test-$QUANTIZATION.gguf"
+              du -h "$RUNNER_TEMP/crazeai-gguf/CrazeAI-Test-$QUANTIZATION.gguf"
+            else
+              echo "- Status: export did not produce a GGUF file"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
