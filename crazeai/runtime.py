@@ -81,12 +81,12 @@ def resolve_model_name(model_name: str | None = None) -> str:
                     candidate = _resolve_local_model(child)
                     if candidate is not None:
                         nearby.append(str(candidate))
-            suggestions = "\\n".join(f"  - {item}" for item in nearby[:8]) or "  (no loadable model directories found nearby)"
+            suggestions = "\n".join(f"  - {item}" for item in nearby[:8]) or "  (no loadable model directories found nearby)"
             raise FileNotFoundError(
-                f"CrazeAI model path does not exist or is not loadable: {requested}\\n"
+                f"CrazeAI model path does not exist or is not loadable: {requested}\n"
                 "Expected a directory containing config.json (full model) or "
-                "adapter_config.json (LoRA adapter).\\n"
-                f"Nearby loadable checkpoints:\\n{suggestions}"
+                "adapter_config.json (LoRA adapter).\n"
+                f"Nearby loadable checkpoints:\n{suggestions}"
             )
         return model_name
 
