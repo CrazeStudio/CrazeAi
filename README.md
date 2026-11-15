@@ -115,7 +115,7 @@ You can choose `Q5_K_M`, `Q8_0`, or `F16` in the workflow input. The output asse
 
 For manual local/Kaggle export, run `python scripts/export_gguf.py --quantization Q4_K_M`. To upload directly from that environment, set `GH_TOKEN` to a token with Contents: read/write permission on this repository and add `--upload`.
 
-### 8. Start the API
+### 9. Start the API
 
     export CRAZEAI_MODEL=outputs/crazeai-500m
     export CRAZEAI_API_KEY=replace-with-a-long-random-secret
