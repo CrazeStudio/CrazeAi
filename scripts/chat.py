@@ -2,55 +2,31 @@ from __future__ import annotations
 
 import argparse
 
-from crazeai.prompt import SYSTEM_PROMPT
 from crazeai.runtime import CrazeAIRuntime
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Chat with CrazeAI in the terminal.")
-    parser.add_argument("--model", default=None, help="Local full-model/LoRA directory or Hugging Face model ID; a missing *-export path can fall back to its matching training output")
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+def main():
+    parser = argparse.ArgumentParser(description="Chat with CrazeAI's own pretrained base model.")
+    parser.add_argument("--model", default=None, help="Local scratch-trained checkpoint directory")
+    parser.add_argument("--max-new-tokens", type=int, default=128)
     args = parser.parse_args()
-
     runtime = CrazeAIRuntime(args.model)
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
-    print(f"CrazeAI loaded from {runtime.model_name} on {runtime.device}.")
-    print("Type /exit to quit or /clear to reset the conversation.")
-
+    print(f"CrazeAI scratch model loaded from {runtime.model_name} on {runtime.device}.")
+    print("Base pretraining teaches text patterns; instruction-following requires a later stage.")
+    print("Type /exit to quit.")
     while True:
         try:
-            user_text = input("\nYou: ").strip()
+            prompt = input("\\nPrompt: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
             break
-        if not user_text:
-            continue
-        if user_text.lower() in {"/exit", "/quit"}:
-            print("Goodbye.")
+        if prompt.lower() in {"/exit", "/quit"}:
             break
-        if user_text.lower() == "/clear":
-            history = [{"role": "system", "content": SYSTEM_PROMPT}]
-            print("Conversation cleared.")
-            continue
-
-        history.append({"role": "user", "content": user_text})
-        try:
+        if prompt:
             answer, _, _ = runtime.generate(
-                history,
+                [{"role": "user", "content": prompt}],
                 max_new_tokens=args.max_new_tokens,
-                temperature=0.7,
-                top_p=0.9,
             )
-        except Exception as exc:
-            history.pop()
-            print(f"CrazeAI error: {exc}")
-            continue
-
-        print(f"\nCrazeAI: {answer}")
-        history.append({"role": "assistant", "content": answer})
-        # Keep the system prompt and the most recent turns to bound memory.
-        if len(history) > 17:
-            history = [history[0]] + history[-16:]
+            print("\\nCrazeAI:", answer)
 
 
 if __name__ == "__main__":
