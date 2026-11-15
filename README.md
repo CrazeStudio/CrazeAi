@@ -124,3 +124,12 @@ For remote deployment, bind to the platform-provided port, set a strong \`CRAZEA
 - Dataset: https://huggingface.co/datasets/HuggingFaceTB/smoltalk
 - Transformers: https://huggingface.co/docs/transformers
 - PyTorch: https://pytorch.org/
+
+
+### Resumable training and standalone export
+
+Run **Actions → CrazeAI Train, Resume and Export → Run workflow** on a configured self-hosted Linux CUDA runner labelled `gpu`. The workflow restores the latest retained training-state artifact, resumes from the newest `checkpoint-*` directory when enabled, evaluates the completed checkpoint, and exports a standalone Transformers model. LoRA adapters are merged into the base model for the standalone export; full fine-tuning checkpoints are exported directly.
+
+The job timeout is 24 hours, but timeout settings do not extend the lifetime of a disconnected or externally terminated runner. The workflow uploads checkpoint and dataset state with `if: always()`, so a failed or cancelled run can be resumed from its retained artifact on a later run. Artifact retention is 30 days. The resumable state artifact contains the checkpoint, optimizer/scheduler state and processed dataset; the standalone export is a separate artifact named `crazeai-500m-standalone-export`.
+
+A self-hosted GPU runner is required. GitHub Actions cannot create GPU capacity by setting a longer timeout. Protect the runner and its storage, and verify available disk space before a 50K-example run. A 50K SFT set fine-tunes the declared pretrained Qwen checkpoint; it does not train a foundation model from random initialization.
