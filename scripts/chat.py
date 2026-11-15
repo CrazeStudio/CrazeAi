@@ -8,7 +8,7 @@ from crazeai.runtime import CrazeAIRuntime
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chat with CrazeAI in the terminal.")
-    parser.add_argument("--model", default=None, help="Local checkpoint directory or Hugging Face model ID")
+    parser.add_argument("--model", default=None, help="Local full-model/LoRA directory or Hugging Face model ID; a missing *-export path can fall back to its matching training output")
     parser.add_argument("--max-new-tokens", type=int, default=256)
     args = parser.parse_args()
 
