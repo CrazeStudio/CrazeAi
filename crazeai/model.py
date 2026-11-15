@@ -46,7 +46,7 @@ class DecoderBlock(nn.Module):
         normalized = self.norm1(x)
         attended, _ = self.attn(
             normalized, normalized, normalized, attn_mask=causal_mask,
-            need_weights=False, is_causal=True,
+            need_weights=False, is_causal=False,
         )
         x = x + self.dropout(attended)
         return x + self.mlp(self.norm2(x))
