@@ -13,3 +13,4 @@ data/processed/
 outputs/
 runs/
 *.log
+data/corpus/\n
