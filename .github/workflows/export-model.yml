@@ -1,0 +1,122 @@
+name: CrazeAI Export Model
+# Standalone export, decoupled from training. Use it when a training run was cut
+# off by the job timeout (or you just want to re-export): it pulls the retained
+# training-state artifact from a previous run, merges/exports the model and
+# uploads it. Training is NOT run here, so the training timeout cannot hit it.
+#
+# Timeout notes (GitHub hard limits): GitHub-hosted jobs max out at 360 min and
+# self-hosted jobs at 7200 min (5 days). An export needs minutes, not hours; on
+# the self-hosted runner this job is given the maximum allowed limit.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Run ID that produced the training state (blank = newest run with an unexpired state artifact)
+        type: string
+        default: ""
+        required: false
+      checkpoint:
+        description: Checkpoint folder, e.g. checkpoint-900 (blank = final model, else newest checkpoint)
+        type: string
+        default: ""
+        required: false
+      runner:
+        description: Where to run. Merging a 0.5B LoRA works fine on CPU
+        type: choice
+        options: [github-hosted, self-hosted-gpu]
+        default: github-hosted
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: crazeai-model-export
+  cancel-in-progress: false
+jobs:
+  export:
+    runs-on: ${{ inputs.runner == 'self-hosted-gpu' && fromJSON('["self-hosted","linux","x64","gpu"]') || 'ubuntu-24.04' }}
+    timeout-minutes: ${{ inputs.runner == 'self-hosted-gpu' && 7200 || 360 }}
+    env:
+      HF_HOME: ${{ runner.temp }}/huggingface
+      TOKENIZERS_PARALLELISM: "false"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ inputs.runner }}" != "self-hosted-gpu" ]; then
+            # CPU-only torch: much smaller and faster to install on hosted runners.
+            python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          fi
+          python -m pip install -r requirements.txt
+      - name: Download training state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -n "$RUN_ID" ] && ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run_id must be numeric"; exit 1
+          fi
+          FILTER='[.artifacts[] | select(.expired == false and (.name | startswith("crazeai-training-state-")) and (env.RUN_ID == "" or ((.workflow_run.id | tostring) == env.RUN_ID)))] | sort_by(.created_at) | last | select(. != null) | "\(.name) \(.workflow_run.id)"'
+          read -r NAME RID <<< "$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq "$FILTER")"
+          if [ -z "${NAME:-}" ]; then
+            echo "::error::No unexpired crazeai-training-state-* artifact found (artifacts are kept for 30 days)."
+            exit 1
+          fi
+          echo "Using artifact $NAME from run $RID"
+          gh run download "$RID" --repo "$GITHUB_REPOSITORY" --name "$NAME" --dir restored
+      - name: Locate model or checkpoint
+        id: locate
+        shell: bash
+        env:
+          CKPT: ${{ inputs.checkpoint }}
+        run: |
+          if [ -n "$CKPT" ] && ! [[ "$CKPT" =~ ^checkpoint-[0-9]+$ ]]; then
+            echo "::error::checkpoint must look like checkpoint-900"; exit 1
+          fi
+          BASE=restored/outputs/crazeai-500m
+          if [ ! -d "$BASE" ]; then
+            BASE="$(find restored -type d -name crazeai-500m | head -n 1)"
+          fi
+          [ -n "$BASE" ] && [ -d "$BASE" ] || { echo "::error::crazeai-500m directory not found in artifact"; exit 1; }
+          if [ -n "$CKPT" ]; then
+            MODEL="$BASE/$CKPT"
+          elif [ -f "$BASE/adapter_config.json" ] || [ -f "$BASE/config.json" ]; then
+            MODEL="$BASE"
+          else
+            MODEL="$(find "$BASE" -maxdepth 1 -type d -name 'checkpoint-*' | sort -V | tail -n 1)"
+          fi
+          [ -n "$MODEL" ] && [ -d "$MODEL" ] || { echo "::error::No final model or checkpoint found to export"; exit 1; }
+          echo "Exporting from $MODEL"
+          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
+      - name: Export standalone model
+        shell: bash
+        run: |
+          python scripts/export_model.py \
+            --model "${{ steps.locate.outputs.model }}" \
+            --output outputs/crazeai-500m-export \
+            --merge-adapter
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### CrazeAI export"
+            echo "- Source: \`${{ steps.locate.outputs.model }}\`"
+            echo "- Size: $(du -sh outputs/crazeai-500m-export | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload exported model
+        uses: actions/upload-artifact@v4
+        with:
+          name: crazeai-500m-standalone-export-${{ github.run_id }}
+          path: outputs/crazeai-500m-export/
+          if-no-files-found: error
+          retention-days: 30
