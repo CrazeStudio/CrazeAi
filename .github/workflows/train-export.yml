@@ -60,8 +60,11 @@ jobs:
   train:
     # Use a persistent self-hosted Linux CUDA runner. A GitHub-hosted runner
     # does not provide a suitable persistent GPU/long-running training environment.
+    # 7200 minutes (5 days) is the maximum GitHub allows for self-hosted jobs.
+    # If a run is still cut off, use the "CrazeAI Export Model" workflow to export
+    # from the uploaded training-state artifact.
     runs-on: [self-hosted, linux, x64, gpu]
-    timeout-minutes: 1440
+    timeout-minutes: 7200
     env:
       HF_HOME: ${{ runner.temp }}/huggingface
       TOKENIZERS_PARALLELISM: "false"
@@ -94,7 +97,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: crazeai-training-state-*
-          path: outputs
+          # The artifact stores paths relative to the workspace (outputs/... and
+          # data/processed/...), so restore at the workspace root. Restoring into
+          # "outputs" would nest them as outputs/outputs/... and resume would never
+          # find the checkpoints.
+          path: .
           merge-multiple: true
         continue-on-error: true
       - name: Prepare dataset
@@ -162,7 +169,7 @@ jobs:
           python scripts/export_model.py \
             --model outputs/crazeai-500m \
             --output outputs/crazeai-500m-export \
-            --merge-adapter "${{ inputs.training_mode == 'lora' }}"
+            --merge-adapter
       - name: Upload resumable state even after a failure
         if: always()
         uses: actions/upload-artifact@v4
