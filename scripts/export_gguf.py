@@ -75,6 +75,7 @@ def prepare_llama_cpp(directory: Path) -> Path:
 
 def upload_release_asset(asset: Path, tag: str) -> None:
     import os
+    import http.client
     import urllib.error
     import urllib.parse
 
@@ -112,13 +113,36 @@ def upload_release_asset(asset: Path, tag: str) -> None:
             request(f"{api}/releases/assets/{existing['id']}", method="DELETE")
             print(f"Replaced existing release asset: {asset_name}", flush=True)
 
-    upload_url = (
-        f"https://uploads.github.com/repos/CrazeStudio/CrazeAi/"
-        f"releases/{release_id}/assets?name={urllib.parse.quote(asset_name)}"
+    upload_path = (
+        f"/repos/CrazeStudio/CrazeAi/releases/{release_id}/assets"
+        f"?name={urllib.parse.quote(asset_name)}"
     )
-    print(f"Uploading {asset_name} ({asset.stat().st_size / (1024**2):.1f} MiB) to GitHub Release {tag}", flush=True)
-    request(upload_url, method="POST", data=asset.read_bytes(),
-            content_type="application/octet-stream")
+    size = asset.stat().st_size
+    if size > 2 * 1024 * 1024 * 1024:
+        raise RuntimeError("GitHub Release assets must be smaller than 2 GiB.")
+    print(f"Uploading {asset_name} ({size / (1024**2):.1f} MiB) to GitHub Release {tag}", flush=True)
+
+    # Stream from disk instead of reading a potentially multi-gigabyte GGUF into RAM.
+    connection = http.client.HTTPSConnection("uploads.github.com", timeout=300)
+    connection.putrequest("POST", upload_path)
+    connection.putheader("Authorization", f"Bearer {token}")
+    connection.putheader("Accept", "application/vnd.github+json")
+    connection.putheader("X-GitHub-Api-Version", "2022-11-28")
+    connection.putheader("User-Agent", "CrazeAI-GGUF-Exporter")
+    connection.putheader("Content-Type", "application/octet-stream")
+    connection.putheader("Content-Length", str(size))
+    connection.endheaders()
+    with asset.open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            connection.send(chunk)
+    response = connection.getresponse()
+    response_body = response.read().decode("utf-8", errors="replace")
+    connection.close()
+    if response.status not in (200, 201):
+        raise RuntimeError(f"GitHub asset upload failed ({response.status}): {response_body}")
     print(f"Release asset uploaded: https://github.com/CrazeStudio/CrazeAi/releases/tag/{tag}", flush=True)
 
 
