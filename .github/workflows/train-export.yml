@@ -66,10 +66,12 @@ jobs:
     runs-on: [self-hosted, linux, x64, gpu]
     timeout-minutes: 7200
     env:
-      HF_HOME: ${{ runner.temp }}/huggingface
       TOKENIZERS_PARALLELISM: "false"
       PYTHONUNBUFFERED: "1"
     steps:
+      - name: Set Hugging Face cache location
+        shell: bash
+        run: echo "HF_HOME=$RUNNER_TEMP/huggingface" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@v4
       - name: Python
