@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--layers", type=int, default=8)
     parser.add_argument("--heads", type=int, default=8)
-    parser.add_argument("--vocab-size", type=int, default=16000)
+    parser.add_argument("--vocab-size", type=int, default=0, help="0 uses the exact vocabulary size of tokenizer.json")
     args = parser.parse_args()
     if args.steps < 1 or args.batch_size < 1 or args.block_size < 8:
         parser.error("steps and batch-size must be positive; block-size must be >=8")
@@ -107,8 +107,11 @@ def main():
         raise RuntimeError("Not enough token blocks for this batch/block size.")
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False)
+    tokenizer_vocab_size = Tokenizer.from_file(str(args.tokenizer)).get_vocab_size()
+    if args.vocab_size and args.vocab_size != tokenizer_vocab_size:
+        raise ValueError(f"--vocab-size {args.vocab_size} does not match tokenizer vocabulary {tokenizer_vocab_size}")
     config = CrazeAIConfig(
-        vocab_size=args.vocab_size, max_seq_len=args.block_size,
+        vocab_size=tokenizer_vocab_size, max_seq_len=args.block_size,
         d_model=args.d_model, n_layers=args.layers, n_heads=args.heads,
     )
     config.validate()
