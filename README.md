@@ -105,6 +105,16 @@ Other supported quantization choices are `Q5_K_M` and `Q8_0`. The script clones 
 
 The exported GGUF is a standalone merged model; it no longer needs the LoRA adapter at inference time. Quantization reduces file size and can slightly affect output quality.
 
+
+
+### 8. One-click GGUF export and release upload (recommended)
+
+You do not need Kaggle for conversion. Open **Actions → CrazeAI GGUF Export → Run workflow**, keep release tag `v0.1.0-test`, choose `Q4_K_M`, and run it. The workflow uses a GitHub-hosted CPU runner, downloads the LoRA ZIP from the release, merges it into the Qwen base model, converts and quantizes it, then uploads the resulting `.gguf` and SHA-256 checksum to the same release. It requires the repository Actions workflow to have permission to write contents/releases.
+
+You can choose `Q5_K_M`, `Q8_0`, or `F16` in the workflow input. The output asset is named `CrazeAI-Test-<QUANTIZATION>.gguf`.
+
+For manual local/Kaggle export, run `python scripts/export_gguf.py --quantization Q4_K_M`. To upload directly from that environment, set `GH_TOKEN` to a token with Contents: read/write permission on this repository and add `--upload`.
+
 ### 8. Start the API
 
     export CRAZEAI_MODEL=outputs/crazeai-500m
