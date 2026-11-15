@@ -13,14 +13,89 @@ BASE_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 DEFAULT_LOCAL_MODEL = Path("outputs/crazeai-500m")
 
 
+def _has_model_files(path: Path) -> bool:
+    """Return True for a Transformers model directory or a PEFT adapter directory."""
+    return path.is_dir() and (
+        (path / "config.json").is_file()
+        or (path / "adapter_config.json").is_file()
+    )
+
+
+def _latest_checkpoint(directory: Path) -> Path | None:
+    """Find the newest loadable checkpoint directly inside a training output directory."""
+    if not directory.is_dir():
+        return None
+    checkpoints = [
+        child for child in directory.glob("checkpoint-*")
+        if child.is_dir() and _has_model_files(child)
+    ]
+    if not checkpoints:
+        return None
+
+    def step_number(path: Path) -> int:
+        try:
+            return int(path.name.rsplit("-", 1)[1])
+        except (IndexError, ValueError):
+            return -1
+
+    return max(checkpoints, key=step_number)
+
+
+def _resolve_local_model(path: Path) -> Path | None:
+    """Resolve a model directory, including the newest checkpoint in a run directory."""
+    path = path.expanduser()
+    if _has_model_files(path):
+        return path
+    return _latest_checkpoint(path)
+
+
 def resolve_model_name(model_name: str | None = None) -> str:
     if model_name:
+        requested = Path(model_name).expanduser()
+        is_local_path = requested.is_absolute() or model_name.startswith(("./", "../", "~/")) or requested.exists()
+        if is_local_path:
+            resolved = _resolve_local_model(requested)
+            if resolved is not None:
+                return str(resolved)
+
+            # A common mistake is to pass the intended *export* path before
+            # running export_model.py. If the matching training output exists,
+            # load its adapter directly instead (CrazeAIRuntime supports PEFT).
+            if requested.name.endswith("-export"):
+                training_output = requested.with_name(requested.name[:-7])
+                resolved = _resolve_local_model(training_output)
+                if resolved is not None:
+                    import warnings
+
+                    warnings.warn(
+                        f"Model path '{requested}' does not exist; using the matching "
+                        f"training checkpoint '{resolved}'. Run scripts/export_model.py "
+                        "with --merge-adapter if you need a standalone export.",
+                        stacklevel=2,
+                    )
+                    return str(resolved)
+
+            nearby = []
+            if requested.parent.is_dir():
+                for child in sorted(requested.parent.iterdir()):
+                    candidate = _resolve_local_model(child)
+                    if candidate is not None:
+                        nearby.append(str(candidate))
+            suggestions = "\\n".join(f"  - {item}" for item in nearby[:8]) or "  (no loadable model directories found nearby)"
+            raise FileNotFoundError(
+                f"CrazeAI model path does not exist or is not loadable: {requested}\\n"
+                "Expected a directory containing config.json (full model) or "
+                "adapter_config.json (LoRA adapter).\\n"
+                f"Nearby loadable checkpoints:\\n{suggestions}"
+            )
         return model_name
+
     configured = os.getenv("CRAZEAI_MODEL")
     if configured:
-        return configured
-    if DEFAULT_LOCAL_MODEL.is_dir():
-        return str(DEFAULT_LOCAL_MODEL)
+        return resolve_model_name(configured)
+    local_default = _resolve_local_model(DEFAULT_LOCAL_MODEL)
+    if local_default is not None:
+        return str(local_default)
     return BASE_MODEL_ID
 
 
