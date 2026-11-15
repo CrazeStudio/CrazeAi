@@ -156,7 +156,7 @@ def main():
         description="Pretrain CrazeAI's decoder-only model from random initialization."
     )
     parser.add_argument("--corpus", type=Path, default=Path("data/corpus/raw.jsonl"))
-    parser.add_argument("--tokenizer", type=Path, default=Path("outputs/tokenizer/tokenizer.json"))
+    parser.add_argument("--tokenizer", type=Path, default=Path("outputs/crazeai-base/tokenizer.json"))
     parser.add_argument("--output", type=Path, default=Path("outputs/crazeai-base"))
     parser.add_argument("--steps", type=int, default=1000, help="Total target optimizer steps")
     parser.add_argument("--batch-size", type=int, default=4)
