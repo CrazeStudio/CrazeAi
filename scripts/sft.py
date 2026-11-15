@@ -22,7 +22,7 @@ def load_sft_examples(dataset_path: Path, tokenizer: Tokenizer, block_size: int)
     if eos_id is None:
         raise ValueError("Tokenizer is missing the [EOS] token")
 
-    examples = []
+    conversations = []
     skipped = 0
     with dataset_path.open("r", encoding="utf-8") as source:
         for line_number, line in enumerate(source, 1):
@@ -38,6 +38,7 @@ def load_sft_examples(dataset_path: Path, tokenizer: Tokenizer, block_size: int)
                 continue
 
             history = []
+            conversation_examples = []
             for message in messages:
                 if not isinstance(message, dict):
                     continue
@@ -74,22 +75,25 @@ def load_sft_examples(dataset_path: Path, tokenizer: Tokenizer, block_size: int)
                         labels = sequence[1:].copy()
                         prompt_label_count = max(0, len(prompt_ids) - 1)
                         labels[:prompt_label_count] = [-100] * prompt_label_count
-                        examples.append((sequence[:-1], labels))
+                        conversation_examples.append((sequence[:-1], labels))
 
                     history.append("ASSISTANT: " + content)
                 else:
                     history.append(role.upper() + ": " + content)
+            if conversation_examples:
+                conversations.append(conversation_examples)
 
-    if not examples:
+    if not conversations:
         raise RuntimeError(
             "No assistant training examples were produced. "
             "Expected JSONL rows with messages containing user and assistant roles."
         )
     print(
-        f"Prepared {len(examples):,} assistant-turn examples; skipped {skipped:,} invalid rows.",
+        f"Prepared {sum(len(group) for group in conversations):,} assistant-turn examples "
+        f"across {len(conversations):,} conversations; skipped {skipped:,} invalid rows.",
         flush=True,
     )
-    return examples
+    return conversations
 
 
 class SFTDataset(Dataset):
@@ -233,16 +237,22 @@ def main():
         )
 
     print("Preparing assistant-only SFT examples...", flush=True)
-    examples = load_sft_examples(args.dataset, tokenizer, args.block_size)
-    if len(examples) < 2:
-        raise RuntimeError("At least two valid assistant-turn examples are required.")
+    conversations = load_sft_examples(args.dataset, tokenizer, args.block_size)
+    if len(conversations) < 2:
+        raise RuntimeError("At least two valid conversations are required for train/validation split.")
 
     generator = torch.Generator().manual_seed(args.seed)
-    val_count = max(1, int(len(examples) * args.validation_fraction))
-    train_count = len(examples) - val_count
-    train_set, val_set = random_split(
-        SFTDataset(examples), [train_count, val_count], generator=generator
+    val_count = max(1, int(len(conversations) * args.validation_fraction))
+    train_count = len(conversations) - val_count
+    train_groups, val_groups = random_split(
+        conversations, [train_count, val_count], generator=generator
     )
+    train_examples = [example for group in train_groups for example in group]
+    val_examples = [example for group in val_groups for example in group]
+    if not train_examples or not val_examples:
+        raise RuntimeError("Conversation-level split produced an empty train or validation set.")
+    train_set = SFTDataset(train_examples)
+    val_set = SFTDataset(val_examples)
     collate = make_collate(pad_id)
     train_loader = DataLoader(
         train_set, batch_size=args.batch_size, shuffle=True,
