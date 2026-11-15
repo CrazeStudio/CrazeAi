@@ -136,7 +136,9 @@ def evaluate(model, loader, device, amp_dtype, max_batches=20):
 def save_checkpoint(output, model, optimizer, step, tokenizer_path, config):
     output.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output)
-    destination_tokenizer = output / "tokenizer.json"\n    if tokenizer_path.resolve() != destination_tokenizer.resolve():\n        shutil.copy2(tokenizer_path, destination_tokenizer)
+    destination_tokenizer = output / "tokenizer.json"
+    if tokenizer_path.resolve() != destination_tokenizer.resolve():
+        shutil.copy2(tokenizer_path, destination_tokenizer)
     state = {
         "step": step,
         "model": model.state_dict(),
