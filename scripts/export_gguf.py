@@ -61,11 +61,65 @@ def prepare_llama_cpp(directory: Path) -> Path:
             "https://github.com/ggml-org/llama.cpp.git", str(directory)
         ])
 
-    requirements = directory / "requirements.txt"
-    if requirements.is_file():
-        run([sys.executable, "-m", "pip", "install", "-r", str(requirements)])
+    # llama.cpp keeps converter-specific Python dependencies separately.
+    converter_requirements = directory / "requirements" / "requirements-convert_hf_to_gguf.txt"
+    if converter_requirements.is_file():
+        run([sys.executable, "-m", "pip", "install", "-r", str(converter_requirements)])
+    else:
+        requirements = directory / "requirements.txt"
+        if requirements.is_file():
+            run([sys.executable, "-m", "pip", "install", "-r", str(requirements)])
 
     return directory
+
+
+def upload_release_asset(asset: Path, tag: str) -> None:
+    import os
+    import urllib.error
+    import urllib.parse
+
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("Set GH_TOKEN (or GITHUB_TOKEN) before using --upload.")
+
+    api = "https://api.github.com/repos/CrazeStudio/CrazeAi"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "CrazeAI-GGUF-Exporter",
+    }
+
+    def request(url: str, method: str = "GET", data: bytes | None = None,
+                content_type: str = "application/json"):
+        req_headers = dict(headers)
+        req_headers["Content-Type"] = content_type
+        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as response:
+                body = response.read()
+                return response.status, json.loads(body) if body else {}
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"GitHub API {exc.code}: {detail}") from exc
+
+    _, release = request(f"{api}/releases/tags/{urllib.parse.quote(tag, safe='')}")
+    release_id = release["id"]
+    asset_name = asset.name
+
+    for existing in release.get("assets", []):
+        if existing.get("name") == asset_name:
+            request(f"{api}/releases/assets/{existing['id']}", method="DELETE")
+            print(f"Replaced existing release asset: {asset_name}", flush=True)
+
+    upload_url = (
+        f"https://uploads.github.com/repos/CrazeStudio/CrazeAi/"
+        f"releases/{release_id}/assets?name={urllib.parse.quote(asset_name)}"
+    )
+    print(f"Uploading {asset_name} ({asset.stat().st_size / (1024**2):.1f} MiB) to GitHub Release {tag}", flush=True)
+    request(upload_url, method="POST", data=asset.read_bytes(),
+            content_type="application/octet-stream")
+    print(f"Release asset uploaded: https://github.com/CrazeStudio/CrazeAi/releases/tag/{tag}", flush=True)
 
 
 def main() -> None:
@@ -88,6 +142,11 @@ def main() -> None:
         action="store_true",
         help="Keep the merged Transformers model and temporary F16 GGUF.",
     )
+    parser.add_argument(
+        "--upload", action="store_true",
+        help="Upload the finished GGUF as an asset to the existing GitHub Release.",
+    )
+    parser.add_argument("--release-tag", default="v0.1.0-test")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -146,6 +205,10 @@ def main() -> None:
         f16_path.unlink(missing_ok=True)
 
     print(f"GGUF export complete: {final_path}", flush=True)
+    if not final_path.is_file() or final_path.stat().st_size == 0:
+        raise RuntimeError("GGUF output is missing or empty; refusing to upload.")
+    if args.upload:
+        upload_release_asset(final_path, args.release_tag)
 
 
 if __name__ == "__main__":
