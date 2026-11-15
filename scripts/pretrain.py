@@ -254,7 +254,7 @@ def main():
         if state.get("torch_rng_state") is not None:
             torch.set_rng_state(state["torch_rng_state"].cpu())
         if device.type == "cuda" and state.get("cuda_rng_state") is not None:
-            torch.cuda.set_rng_state_all(state["cuda_rng_state"])
+            torch.cuda.set_rng_state_all([rng_state.cpu() for rng_state in state["cuda_rng_state"]])
         print(f"Resumed from optimizer step {start_step:,}", flush=True)
 
     if start_step >= args.steps:
