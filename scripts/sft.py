@@ -61,8 +61,14 @@ def load_sft_examples(dataset_path: Path, tokenizer: Tokenizer, block_size: int)
                     # Keep the answer intact when possible; trim old prompt context first.
                     max_tokens = block_size + 1
                     if len(answer_ids) >= max_tokens:
-                        answer_ids = answer_ids[:max_tokens - 1] + [eos_id]
+                        # Reserve room for the minimal prompt (BOS when available)
+                        # and EOS. Inputs use sequence[:-1], so they stay within
+                        # the model's configured block_size.
                         prompt_ids = [bos_id] if bos_id is not None else []
+                        answer_budget = max_tokens - len(prompt_ids)
+                        if answer_budget < 1:
+                            raise ValueError("block_size is too small for the SFT prompt and EOS token")
+                        answer_ids = answer_ids[:answer_budget - 1] + [eos_id]
                     else:
                         prompt_budget = max_tokens - len(answer_ids)
                         if len(prompt_ids) > prompt_budget:
