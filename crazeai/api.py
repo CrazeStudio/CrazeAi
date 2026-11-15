@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CrazeAI API",
     version="1.0.0",
-    description="PyTorch-powered CrazeAI 0.5B chat API.",
+    description="API for a locally trained CrazeAI scratch language model.",
     lifespan=lifespan,
 )
 
@@ -83,7 +83,7 @@ async def health():
         raise HTTPException(status_code=503, detail="Model is not loaded")
     return {
         "status": "ok",
-        "model": "crazeai-500m",
+        "model": "crazeai-scratch",
         "device": str(runtime.device),
     }
 
