@@ -74,7 +74,20 @@ Evaluation reports token-weighted validation loss, perplexity, and deterministic
 
 ### 6. Chat locally
 
+The runtime accepts either a merged Transformers model directory or a LoRA adapter directory (the adapter is loaded together with its recorded base model):
+
     python scripts/chat.py --model outputs/crazeai-500m
+
+For a Kaggle LoRA run saved to `/kaggle/working/crazeai-test`, test the adapter directly:
+
+    python -m scripts.chat --model /kaggle/working/crazeai-test
+
+If you want a standalone merged export first:
+
+    python -m scripts.export_model --model /kaggle/working/crazeai-test --output /kaggle/working/crazeai-test-export --merge-adapter
+    python -m scripts.chat --model /kaggle/working/crazeai-test-export
+
+If a supplied local path is missing or is not a model directory, the runtime now raises a clear `FileNotFoundError` listing nearby loadable checkpoints. When a requested path ends in `-export` but has not been created yet, CrazeAI checks for the matching training directory and loads its adapter directly if available, with a warning.
 
 ### 7. Start the API
 
