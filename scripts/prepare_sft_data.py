@@ -52,6 +52,7 @@ def main():
         parser.error("--limit must be positive and --min-messages must be at least 2")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Loading dataset {args.dataset!r}, split={args.split!r}...", flush=True)
     stream = load_dataset(
         args.dataset,
         split=args.split,
@@ -59,16 +60,19 @@ def main():
         download_config=DownloadConfig(max_retries=10),
     )
 
+    print("Dataset stream opened. Scanning conversations...", flush=True)
     accepted = scanned = 0
     with args.output.open("w", encoding="utf-8") as output:
         for row in stream:
             scanned += 1
+            if scanned == 1 or scanned % 100 == 0:
+                print(f"scanned={scanned:,} accepted={accepted:,}", flush=True)
             messages = normalize_messages(row)
             if not messages or len(messages) < args.min_messages:
                 continue
             output.write(json.dumps({"messages": messages}, ensure_ascii=False) + "\n")
             accepted += 1
-            if accepted % 500 == 0:
+            if accepted % 100 == 0:
                 output.flush()
                 print(f"accepted={accepted:,} scanned={scanned:,}", flush=True)
             if accepted >= args.limit:
